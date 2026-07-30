@@ -8,6 +8,11 @@ all in a single Worker with one D1 database.
 **No client-side JavaScript. No third-party services.** ~90 lines of glue code
 to add to your existing Worker; everything else is plug-and-play.
 
+> This repo is published as a reference implementation and starting point for
+> your own fork. **Bug-fix PRs are welcome** — I'll review and merge them.
+> Feature PRs are unlikely to be reviewed. I'm not actively maintaining this
+> for the broader community.
+
 ---
 
 ## How it works
