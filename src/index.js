@@ -4,7 +4,7 @@
 // snippets below show where to add affiliate logic to your existing Worker.
 //
 // For a full integration guide with code snippets, see:
-//   domains/affiliate/SITE_INTEGRATION.md
+//   README.md (#integration)
 
 import { onRequestPost as affLoginPost, onRequestGet as affLoginGet } from "../functions/api/affiliate/login.js";
 import { onRequestGet as affMeGet } from "../functions/api/affiliate/me.js";
