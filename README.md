@@ -39,8 +39,11 @@ pnpm wrangler d1 execute DB --file=migrations/0001_affiliates.sql --remote
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
 pnpm wrangler secret put STRIPE_SECRET_KEY
-pnpm wrangler secret put BREVO_API_KEY
+pnpm wrangler secret put BREVO_API_KEY   # or your email provider's key
 pnpm wrangler secret put ADMIN_TOKEN
+# Optional: if you're not using Brevo, set these too:
+# pnpm wrangler secret put EMAIL_URL       # your provider's API endpoint
+# pnpm wrangler secret put EMAIL_AUTH_HEADER  # e.g. "Authorization" for Bearer token providers
 
 # 4. Create a Stripe coupon named "affiliate-10" (10% off, duration once)
 #    in the Stripe dashboard. This is the base buyer discount.
@@ -63,7 +66,7 @@ Copy these files into your project (same relative paths).
 |---|---|
 | `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
 | `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
-| `functions/api/_email.js` | Brevo transactional email helpers |
+| `functions/api/_email.js` | Transactional email (defaults to Brevo, configurable) |
 | `functions/api/affiliate/login.js` | Rate-limited magic-link login |
 | `functions/api/affiliate/me.js` | Authenticated dashboard JSON |
 | `functions/api/affiliate/logout.js` | Clear session cookie |
@@ -282,12 +285,14 @@ curl -X POST https://yoursite.com/api/admin/payouts-run \
 
 ## Environment vars
 
-| Secret | Where | For |
+| Secret / Env | Where | For |
 |---|---|---|
 | `DB` (D1 binding) | `wrangler.toml` | Affiliate storage |
 | `AFFILIATE_SESSION_SECRET` | `wrangler secret put` | HMAC signing |
 | `STRIPE_SECRET_KEY` | existing | Promo codes + payouts |
-| `BREVO_API_KEY` | existing | Transactional email |
+| `BREVO_API_KEY` | required | Transactional email (Brevo default) |
+| `EMAIL_URL` | optional | Override email API endpoint (default `https://api.brevo.com/v3/smtp/email`) |
+| `EMAIL_AUTH_HEADER` | optional | Override auth header name (default `api-key`) |
 | `ADMIN_TOKEN` | `wrangler secret put` | Admin API gate |
 | `AFFILIATE_IP_SALT` | optional | IP hash salt |
 

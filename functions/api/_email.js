@@ -1,5 +1,11 @@
-// Shared Brevo email helpers. Update the sender name/email to match your
-// store or configure ADMIN_EMAIL in your env vars for admin notifications.
+// Transactional email integration point.
+//
+// Defaults to Brevo (Sendinblue) but is configurable for any JSON-based
+// email API via env vars — see setup instructions in the README.
+//
+// To switch providers, either:
+//   a) Set EMAIL_URL + EMAIL_AUTH_HEADER env vars (no code changes), or
+//   b) Rewrite sendEmail() below (it's ~10 lines).
 
 const SENDER = { name: 'Store', email: 'hello@example.com' };
 
@@ -11,14 +17,24 @@ export function escapeHtml(s) {
     ));
 }
 
-// Send a transactional email via Brevo. Returns the fetch Response (caller
-// checks .ok). BREVO_API_KEY is required; the deploy gate (stripe-health)
-// blocks deploys without it.
-export async function sendEmail(apiKey, params) {
-    return fetch('https://api.brevo.com/v3/smtp/email', {
+// Send a transactional email. Returns the fetch Response (caller checks .ok).
+//
+// Default: Brevo/Sendinblue via the api-key header.
+// Override via env vars:
+//   EMAIL_URL          — API endpoint (default https://api.brevo.com/v3/smtp/email)
+//   EMAIL_AUTH_HEADER  — header name for the API key (default 'api-key')
+//   BREVO_API_KEY      — the API key value (env var name kept for brevity)
+//
+// The `params` object should match your provider's request body schema.
+// Callers currently pass { to, subject, htmlContent } — swap htmlContent
+// for your provider's body field if different.
+export async function sendEmail(apiKey, params, env = {}) {
+    const url = env.EMAIL_URL || 'https://api.brevo.com/v3/smtp/email';
+    const authHeader = env.EMAIL_AUTH_HEADER || 'api-key';
+    return fetch(url, {
         method: 'POST',
         headers: {
-            'api-key': apiKey,
+            [authHeader]: apiKey,
             'Content-Type': 'application/json',
             'Accept': 'application/json',
         },
@@ -27,13 +43,13 @@ export async function sendEmail(apiKey, params) {
 }
 
 // Best-effort admin notification that must NOT gate the main request path.
-// No-op if BREVO_API_KEY is unset.
+// No-op if the configured API key is unset.
 export async function notifyAdmin(env, { subject, body }) {
-    const brevoKey = env.BREVO_API_KEY;
-    if (!brevoKey) return;
-    await sendEmail(brevoKey, {
+    const apiKey = env.BREVO_API_KEY;
+    if (!apiKey) return;
+    await sendEmail(apiKey, {
         to: [{ email: env.ADMIN_EMAIL || 'admin@example.com' }],
         subject,
         htmlContent: body,
-    });
+    }, env);
 }

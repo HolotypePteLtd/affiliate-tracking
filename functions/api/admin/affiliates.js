@@ -92,7 +92,7 @@ export async function onRequestPost(context) {
                 <p><a href="${link}">${link}</a></p>
                 <p>This link expires in 15 minutes.</p>
             `,
-        });
+        }, env);
     }
 
     return Response.json({ ok: true, affiliate: { id: result.meta?.last_row_id, email: normalizedEmail, code: refCode } });

@@ -75,7 +75,7 @@ export async function onRequestPost(context) {
                 <p><a href="${link}">${link}</a></p>
                 <p>If you didn't request this, you can ignore this email.</p>
             `,
-        });
+        }, env);
     }
 
     return Response.json({ success: true });
