@@ -85,10 +85,10 @@ export async function onRequestPost(context) {
         const link = `${origin}/api/affiliate/login?token=${encodeURIComponent(token)}`;
         await sendEmail(env.BREVO_API_KEY, {
             to: [{ email: normalizedEmail }],
-            subject: 'You\'ve been invited to the Holotype affiliate program',
+            subject: 'You\'ve been invited to the affiliate program',
             htmlContent: `
                 <p>Hi${name ? ' ' + name : ''},</p>
-                <p>You've been invited to join the Holotype affiliate program. Click the link below to set up your dashboard:</p>
+                <p>You've been invited to join the affiliate program. Click the link below to set up your dashboard:</p>
                 <p><a href="${link}">${link}</a></p>
                 <p>This link expires in 15 minutes.</p>
             `,

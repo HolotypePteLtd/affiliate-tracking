@@ -7,7 +7,7 @@
 import { importHmacKey, hmacHex, constantTimeCompare } from './_crypto-utils.js';
 
 // Cookie name holding the affiliate session token.
-export const SESSION_COOKIE = 'holotype_aff_session';
+export const SESSION_COOKIE = 'aff_session';
 
 const MAGIC_LINK_TTL = 15 * 60;          // 15 minutes
 const SESSION_TTL = 30 * 24 * 60 * 60;    // 30 days

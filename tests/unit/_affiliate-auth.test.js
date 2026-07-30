@@ -100,7 +100,7 @@ describe('session tokens', () => {
 describe('cookie headers', () => {
     it('sessionCookieHeader includes required flags', () => {
         const h = sessionCookieHeader('abc123', 'https://shop.example.com');
-        expect(h).toContain('holotype_aff_session=abc123');
+        expect(h).toContain('aff_session=abc123');
         expect(h).toContain('HttpOnly');
         expect(h).toContain('SameSite=Lax');
         expect(h).toContain('Max-Age=2592000');
@@ -115,7 +115,7 @@ describe('cookie headers', () => {
 
     it('clearSessionCookieHeader sets Max-Age=0', () => {
         const h = clearSessionCookieHeader('https://shop.example.com');
-        expect(h).toContain('holotype_aff_session=');
+        expect(h).toContain('aff_session=');
         expect(h).toContain('Max-Age=0');
         expect(h).toContain('HttpOnly');
         expect(h).toContain('Secure');

@@ -1,8 +1,7 @@
-// Shared Brevo email helpers. Previously duplicated (with identical bodies) in
-// free-checkout.js and stripe-webhook.js; extracted so the affiliate handlers
-// reuse the same path. Sender identity is fixed for transactional mail.
+// Shared Brevo email helpers. Update the sender name/email to match your
+// store or configure ADMIN_EMAIL in your env vars for admin notifications.
 
-const SENDER = { name: 'Holotype', email: 'hello@holotype.com.sg' };
+const SENDER = { name: 'Store', email: 'hello@example.com' };
 
 // Escape user/Stripe-provided strings before interpolating into HTML email
 // bodies, so a malicious email or product name can't inject markup.
@@ -33,7 +32,7 @@ export async function notifyAdmin(env, { subject, body }) {
     const brevoKey = env.BREVO_API_KEY;
     if (!brevoKey) return;
     await sendEmail(brevoKey, {
-        to: [{ email: env.ADMIN_EMAIL || 'nick@holotype.com.sg' }],
+        to: [{ email: env.ADMIN_EMAIL || 'admin@example.com' }],
         subject,
         htmlContent: body,
     });
