@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, affiliate-program]
+    branches: [master]
   pull_request:
     branches: [master]
 
@@ -29,7 +29,6 @@ jobs:
 
       - name: Syntax check Worker JS
         run: |
-          for f in src/index.js functions/api/checkout.js functions/api/stripe-webhook.js functions/api/free-checkout.js functions/api/_email.js functions/api/_affiliate-auth.js; do
-            [ -f "$f" ] || continue
+          for f in src/index.js functions/api/_affiliate-auth.js functions/api/_crypto-utils.js functions/api/_email.js functions/api/affiliate/login.js functions/api/affiliate/me.js functions/api/affiliate/logout.js functions/api/admin/_gate.js functions/api/admin/affiliates.js functions/api/admin/affiliate-approve.js functions/api/admin/conversions.js functions/api/admin/conversion-approve.js functions/api/admin/payouts-run.js; do
             cp "$f" /tmp/chk.mjs && node --check /tmp/chk.mjs || exit 1
           done
