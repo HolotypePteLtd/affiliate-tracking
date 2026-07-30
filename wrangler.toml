@@ -1,0 +1,19 @@
+name = "cf-affiliate"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# Create this D1 database and paste its ID below:
+#   pnpm wrangler d1 create cf-affiliate
+[[d1_databases]]
+binding = "DB"
+database_name = "cf-affiliate"
+database_id = ""
+
+# Required secrets (provision via wrangler secret put):
+#   STRIPE_SECRET_KEY      — Stripe API key for promo codes + Connect
+#   AFFILIATE_SESSION_SECRET — HMAC key for magic links + session cookies
+#   BREVO_API_KEY          — transactional email via Brevo/Sendinblue
+#   ADMIN_TOKEN            — gates the /api/admin/* endpoints (optional in dev)
+#
+# Optional:
+#   AFFILIATE_IP_SALT      — salt for IP hashing in the clicks table
