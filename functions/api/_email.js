@@ -6,8 +6,11 @@
 // To switch providers, either:
 //   a) Set EMAIL_URL + EMAIL_AUTH_HEADER env vars (no code changes), or
 //   b) Rewrite sendEmail() below (it's ~10 lines).
-
-const SENDER = { name: 'Store', email: 'hello@example.com' };
+//
+// Sender identity comes from env vars with neutral fallbacks, so a consumer
+// never ships this library's domains in their mail:
+//   EMAIL_SENDER_NAME     — display name (default "Store")
+//   EMAIL_SENDER_ADDRESS  — from-address  (default hello@example.com)
 
 // Escape user/Stripe-provided strings before interpolating into HTML email
 // bodies, so a malicious email or product name can't inject markup.
@@ -15,6 +18,19 @@ export function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
     ));
+}
+
+// The From identity for all library-sent mail.
+export function emailSender(env = {}) {
+    return {
+        name: env.EMAIL_SENDER_NAME || 'Store',
+        email: env.EMAIL_SENDER_ADDRESS || 'hello@example.com',
+    };
+}
+
+// The admin recipient for notifications (best-effort set-and-forget).
+export function adminEmail(env = {}) {
+    return env.ADMIN_EMAIL || 'admin@example.com';
 }
 
 // Send a transactional email. Returns the fetch Response (caller checks .ok).
@@ -38,7 +54,7 @@ export async function sendEmail(apiKey, params, env = {}) {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
         },
-        body: JSON.stringify({ ...params, sender: params.sender || SENDER }),
+        body: JSON.stringify({ ...params, sender: params.sender || emailSender(env) }),
     });
 }
 
@@ -48,7 +64,7 @@ export async function notifyAdmin(env, { subject, body }) {
     const apiKey = env.BREVO_API_KEY;
     if (!apiKey) return;
     await sendEmail(apiKey, {
-        to: [{ email: env.ADMIN_EMAIL || 'admin@example.com' }],
+        to: [{ email: adminEmail(env) }],
         subject,
         htmlContent: body,
     }, env);

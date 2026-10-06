@@ -4,6 +4,10 @@
 //     ref code. Stores the promo_code_id on the affiliate row so checkout.js
 //     can pre-apply the buyer discount.
 //
+//     Also emails the affiliate their acceptance + dashboard link (best-effort;
+//     approval succeeds even if the email fails) — this is what makes the
+//     self-serve apply flow work: the applicant only hears back on approval.
+//
 //     Phase D: also creates a Stripe Connect Express account for the affiliate
 //     and stores stripe_account_id. If Connect isn't enabled on the Stripe
 //     account, the approval still succeeds (affiliate is active) — the response
@@ -11,6 +15,7 @@
 //     creation can be retried later.
 
 import { requireAdmin } from './_gate.js';
+import { sendEmail } from '../_email.js';
 
 const DEFAULT_COUPON = 'affiliate-10';
 
@@ -30,7 +35,7 @@ export async function onRequestPost(context) {
     // Look up the affiliate (must be pending — also allows re-running for
     // approved affiliates that don't have a connect account yet).
     const aff = await db.prepare(
-        "SELECT id, code, email FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
+        "SELECT id, code, email, name FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
     ).bind(id).first();
     if (!aff) {
         return Response.json({ ok: false, error: 'Affiliate not found or already fully approved' }, { status: 404 });
@@ -131,6 +136,32 @@ export async function onRequestPost(context) {
         : [promoData.id, aff.id]
     )).run();
 
+    // --- Acceptance email (best-effort) ---
+    // Sent after the row is active so the dashboard link works immediately.
+    // Failure logs but doesn't fail the approval: the affiliate is already
+    // active and the admin can resend by pointing them at /affiliates/.
+    const origin = new URL(context.request.url).origin;
+    if (env.BREVO_API_KEY) {
+        try {
+            const loginUrl = `${origin}/affiliates/`;
+            await sendEmail(env.BREVO_API_KEY, {
+                to: [{ email: aff.email }],
+                subject: 'You\'re in — your affiliate program access',
+                htmlContent: `
+                    <p>Hi${aff.name ? ' ' + escapeHtml(aff.name) : ''},</p>
+                    <p>Your application to the affiliate program has been approved. Here's everything you need:</p>
+                    <p><strong>Your referral link:</strong><br>${origin}/?ref=${encodeURIComponent(aff.code)}</p>
+                    <p><strong>Your audience discount code:</strong> ${escapeHtml(promoData.code || promoCode)} (10% off, applied automatically via your link)</p>
+                    <p><strong>Your commission:</strong> 20% of each attributed sale, paid monthly.</p>
+                    <p>Sign in to your dashboard to see clicks and conversions in real time:<br><a href="${loginUrl}">${loginUrl}</a></p>
+                    <p>Sign-in is passwordless — enter your email and we'll send you a one-time link.</p>
+                `,
+            }, env);
+        } catch (err) {
+            console.error('Affiliate acceptance email failed:', err.message);
+        }
+    }
+
     return Response.json({
         ok: true,
         affiliate_id: aff.id,
@@ -146,4 +177,10 @@ export async function onRequestPost(context) {
                 connect_note: 'Stripe Connect account could not be created. The affiliate is still active and can receive manual payouts. Check that Stripe Connect is enabled and retry via POST /api/admin/affiliate-approve.',
               }),
     });
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
 }

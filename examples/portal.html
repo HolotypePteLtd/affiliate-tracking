@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<!--
+  Minimal reference implementation of the affiliate portal UX (apply + login).
+  Static file — serve it from anywhere and point the fetches at your Worker,
+  or drop it into your site build and restyle to match your brand.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Affiliate program</title>
+<style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    form { border: 1px solid #ccc; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
+    label { display: block; font-size: .85rem; margin: .6rem 0 .2rem; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: .5rem; border: 1px solid #999; border-radius: 4px; font: inherit; }
+    button { margin-top: .8rem; padding: .5rem 1.2rem; font: inherit; cursor: pointer; }
+    .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+    .msg { margin-top: .8rem; }
+    [hidden] { display: none; }
+</style>
+</head>
+<body>
+<h1>Affiliate program</h1>
+<p>Earn commission promoting our products. Apply below, or sign in to your dashboard.</p>
+
+<form id="apply">
+    <h2>Apply</h2>
+    <label for="a-email">Email</label>
+    <input id="a-email" type="email" required>
+    <label for="a-name">Name / brand</label>
+    <input id="a-name" type="text">
+    <label for="a-msg">Where would you share it?</label>
+    <textarea id="a-msg" rows="3"></textarea>
+    <!-- Honeypot: must stay empty. -->
+    <input id="a-website" class="hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button>Submit application</button>
+    <p class="msg" id="a-msg-out" hidden></p>
+</form>
+
+<form id="login">
+    <h2>Partner sign-in</h2>
+    <label for="l-email">Email</label>
+    <input id="l-email" type="email" required>
+    <button>Send me a sign-in link</button>
+    <p class="msg" id="l-msg-out" hidden></p>
+</form>
+
+<div id="sent" hidden>
+    <h2>Check your email</h2>
+    <p>If that address is a partner account, a one-time sign-in link (valid 15 minutes) is on its way.</p>
+</div>
+
+<script>
+// Point this at your Worker (same origin if the Worker serves your site).
+const API = '';
+
+document.getElementById('apply').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = document.getElementById('a-msg-out');
+    const res = await fetch(`${API}/api/affiliate/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            email: document.getElementById('a-email').value.trim(),
+            name: document.getElementById('a-name').value.trim(),
+            message: document.getElementById('a-msg').value.trim(),
+            website: document.getElementById('a-website').value, // honeypot
+        }),
+    });
+    const data = await res.json().catch(() => ({}));
+    out.hidden = false;
+    // Anti-enumeration: well-formed payloads always answer success:true.
+    out.textContent = data.success
+        ? 'Application received — we will reply by email.'
+        : (data.error || 'Could not submit. Try again later.');
+});
+
+document.getElementById('login').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = document.getElementById('l-msg-out');
+    const res = await fetch(`${API}/api/affiliate/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: document.getElementById('l-email').value.trim() }),
+    });
+    if (res.ok) {
+        document.getElementById('login').hidden = true;
+        document.getElementById('sent').hidden = false;
+    } else {
+        out.hidden = false;
+        out.textContent = res.status === 429
+            ? 'Too many attempts — wait a minute and retry.'
+            : 'Could not send the link. Try again later.';
+    }
+});
+</script>
+</body>
+</html>

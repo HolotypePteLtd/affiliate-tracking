@@ -1,8 +1,11 @@
 // Admin: manage affiliates.
 //
 //   GET  /api/admin/affiliates          — list all affiliates with stats
-//   POST /api/admin/affiliates {email, name?, code?, commissionPct?}
+//   POST /api/admin/affiliates {email, name?, code?, commissionPct?, source?}
 //                                       — create (pending), send invite email
+//
+// route.js maps the exact same paths, so consumers already exposing
+// /api/admin/affiliates keep their handler and simply skip that route entry.
 
 import { requireAdmin } from './_gate.js';
 import { sendEmail } from '../_email.js';
@@ -19,6 +22,7 @@ export async function onRequestGet(context) {
 
     const rows = await db.prepare(`
         SELECT a.id, a.email, a.name, a.code, a.status, a.commission_pct, a.created_at,
+               a.source, a.message, a.applied_at,
                COALESCE(c.clicks, 0) as clicks,
                COALESCE(cnv.pending, 0) as pending_conversions,
                COALESCE(cnv.approved, 0) as approved_conversions,
@@ -63,7 +67,7 @@ export async function onRequestPost(context) {
     let result;
     try {
         result = await db.prepare(
-            'INSERT INTO affiliates (email, name, code, status, commission_pct, created_at) VALUES (?1,?2,?3,\'pending\',?4,?5)'
+            "INSERT INTO affiliates (email, name, code, status, commission_pct, source, created_at) VALUES (?1,?2,?3,'pending',?4,'admin',?5)"
         ).bind(normalizedEmail, name || null, refCode, pct, Date.now()).run();
     } catch (err) {
         if (err.message?.includes('UNIQUE')) {
@@ -87,7 +91,7 @@ export async function onRequestPost(context) {
             to: [{ email: normalizedEmail }],
             subject: 'You\'ve been invited to the affiliate program',
             htmlContent: `
-                <p>Hi${name ? ' ' + name : ''},</p>
+                <p>Hi${name ? ' ' + escapeHtml(name) : ''},</p>
                 <p>You've been invited to join the affiliate program. Click the link below to set up your dashboard:</p>
                 <p><a href="${link}">${link}</a></p>
                 <p>This link expires in 15 minutes.</p>
@@ -96,4 +100,10 @@ export async function onRequestPost(context) {
     }
 
     return Response.json({ ok: true, affiliate: { id: result.meta?.last_row_id, email: normalizedEmail, code: refCode } });
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
 }

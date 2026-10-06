@@ -2,11 +2,11 @@
 
 A self-hosted, open-source affiliate program for Cloudflare Worker + Stripe shops.
 Tracks referral links, attributes conversions through Stripe Checkout Session
-metadata, provides a dashboard for affiliates, and admin API for management —
-all in a single Worker with one D1 database.
+metadata, provides a dashboard for affiliates, an admin API for management, and
+a self-serve application endpoint — all in your existing Worker with one D1
+database.
 
-**No client-side JavaScript. No third-party services.** ~90 lines of glue code
-to add to your existing Worker; everything else is plug-and-play.
+**No client-side JavaScript. No third-party services. Four function calls.**
 
 > This repo is published as a reference implementation and starting point for
 > your own fork. **Bug-fix PRs are welcome** — I'll review and merge them.
@@ -40,6 +40,7 @@ pnpm wrangler d1 create cf-affiliate
 
 # 2. Apply the schema
 pnpm wrangler d1 execute DB --file=migrations/0001_affiliates.sql --remote
+pnpm wrangler d1 execute DB --file=migrations/0002_affiliate_applications.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -49,6 +50,9 @@ pnpm wrangler secret put ADMIN_TOKEN
 # Optional: if you're not using Brevo, set these too:
 # pnpm wrangler secret put EMAIL_URL       # your provider's API endpoint
 # pnpm wrangler secret put EMAIL_AUTH_HEADER  # e.g. "Authorization" for Bearer token providers
+#
+# Sender identity for all affiliate mail (or set EMAIL_SENDER_NAME/EMAIL_SENDER_ADDRESS
+# as plain [vars] in wrangler.toml — recommended). Fallbacks are neutral placeholders.
 
 # 4. Create a Stripe coupon named "affiliate-10" (10% off, duration once)
 #    in the Stripe dashboard. This is the base buyer discount.
@@ -56,221 +60,109 @@ pnpm wrangler secret put ADMIN_TOKEN
 # 5. Run tests (no Stripe/D1 — pure JS unit tests)
 pnpm test
 
-# 6. Copy the handler files into your project's Worker and add the
-#    four integration snippets below. Then deploy:
+# 6. Install the library and wire the four calls below, then deploy
+pnpm add file:../cf-affiliate     # or: pnpm add github:you/cf-affiliate
 pnpm wrangler deploy
 ```
 
 ---
 
-## Files
+## Install
 
-Copy these files into your project (same relative paths).
+```bash
+pnpm add file:../cf-affiliate          # sibling checkout, edit-and-reload
+pnpm add github:you/cf-affiliate#v0.2.0  # pinned
+```
 
-| Path | What |
-|---|---|
-| `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
-| `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
-| `functions/api/_email.js` | Transactional email (defaults to Brevo, configurable) |
-| `functions/api/affiliate/login.js` | Rate-limited magic-link login |
-| `functions/api/affiliate/me.js` | Authenticated dashboard JSON |
-| `functions/api/affiliate/logout.js` | Clear session cookie |
-| `functions/api/admin/_gate.js` | x-admin-token gate |
-| `functions/api/admin/affiliates.js` | List + create affiliates |
-| `functions/api/admin/affiliate-approve.js` | Mint promo code + Connect account |
-| `functions/api/admin/conversions.js` | List conversions |
-| `functions/api/admin/conversion-approve.js` | Approve/reject conversions |
-| `functions/api/admin/payouts-run.js` | Stripe Transfer or manual payout |
-| `tests/unit/` | 37 unit tests (crypto, auth, gate, email) |
-| `migrations/0001_affiliates.sql` | Schema (4 tables, UNIQUE idempotency) |
+## Integration — four calls
 
----
+### 1 · Route the API (`handleAffiliateApi`)
 
-## Integration
-
-**~95% of the code is plug-and-play.** Only four integration points connect it
-to your site. Add these snippets to your existing Worker.
-
-### Integration 1 — Ref-tracking middleware (your Worker's `fetch`)
-
-Before your static-assets fallthrough, add this block. It reads `?ref=` on any
-URL, validates the code in D1, records a click, and sets the attribution cookie.
+In your Worker's `fetch`, before your own route table. It serves every
+`/api/affiliate/*` endpoint plus the admin endpoints and returns `null` for
+anything else, so requests you already handle (your own `/api/admin/*`, for
+example) simply never reach it.
 
 ```js
-// --- Affiliate ref tracking ---
-const ref = url.searchParams.get("ref");
-if (ref) {
-  const refRes = await applyAffiliateRef(request, env, ref);
-  if (refRes) return refRes;
-}
-// --- end ---
+import { handleAffiliateApi, applyAffiliateRef } from "cf-affiliate";
+
+const affRes = await handleAffiliateApi(request, env, ctx);
+if (affRes) return affRes;
+```
+
+### 2 · Ref middleware (`applyAffiliateRef`)
+
+Before your static-assets fallthrough. Reads `?ref=`, validates the code in
+D1, records one click, and appends the attribution cookie to whatever your
+site would have served anyway.
+
+```js
+const refRes = await applyAffiliateRef(request, env, () => env.ASSETS.fetch(request));
+if (refRes) return refRes;
 
 return env.ASSETS.fetch(request);
 ```
 
-Add these helper functions anywhere in your Worker file:
-
-```js
-function parseCookies(header) {
-  const out = {};
-  if (!header) return out;
-  for (const part of header.split(";")) {
-    const idx = part.indexOf("=");
-    if (idx === -1) continue;
-    const k = part.slice(0, idx).trim();
-    const v = part.slice(idx + 1).trim();
-    if (k) out[k] = v;
-  }
-  return out;
-}
-
-async function hashIp(ip, salt) {
-  if (!ip) return null;
-  const data = new TextEncoder().encode(ip + (salt || ""));
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function applyAffiliateRef(request, env, code) {
-  if (!env.DB) return null;
-  const aff = await env.DB.prepare(
-    "SELECT id, code FROM affiliates WHERE code=?1 AND status='active'"
-  ).bind(code).first();
-  if (!aff) return null;
-
-  const existing = parseCookies(request.headers.get("Cookie")).holotype_ref;
-  if (existing !== aff.code) {
-    const ip = request.headers.get("cf-connecting-ip") || "";
-    const ipHash = await hashIp(ip, env.AFFILIATE_IP_SALT);
-    try {
-      await env.DB.prepare(
-        "INSERT INTO clicks (affiliate_id, ip_hash, created_at) VALUES (?1,?2,?3)"
-      ).bind(aff.id, ipHash, Date.now()).run();
-    } catch (err) {
-      console.error("Affiliate click insert failed:", err.message);
-    }
-  }
-
-  const assetRes = await env.ASSETS.fetch(request);
-  const headers = new Headers(assetRes.headers);
-  headers.append(
-    "Set-Cookie",
-    `holotype_ref=${aff.code}; HttpOnly; SameSite=Lax; Max-Age=2592000; Path=/`
-  );
-  return new Response(assetRes.body, { status: assetRes.status, headers });
-}
-```
-
 Optional: `AFFILIATE_IP_SALT` for IP hashing (`wrangler secret put AFFILIATE_IP_SALT`).
 
-### Integration 2 — Checkout attribution (your Stripe Session creation)
+### 3 · Checkout attribution (`attachAffiliateAttribution`)
 
-Wherever you POST to `https://api.stripe.com/v1/checkout/sessions`, add this
-block **after** your URLSearchParams is built, **before** the fetch:
-
-```js
-// --- Affiliate attribution ---
-const refCode = parseCookies(request.headers.get("Cookie")).holotype_ref;
-if (refCode && env.DB) {
-  const aff = await env.DB.prepare(
-    "SELECT id, code, promo_code_id FROM affiliates WHERE code=?1 AND status='active'"
-  ).bind(refCode).first();
-  if (aff) {
-    params.append("client_reference_id", aff.code);
-    params.append("metadata[affiliate_id]", String(aff.id));
-    params.append("metadata[affiliate_code]", aff.code);
-    if (aff.promo_code_id) {
-      params.append("discounts[0][promotion_code]", aff.promo_code_id);
-    }
-  }
-}
-// --- end ---
-```
-
-### Integration 3 — Webhook conversion recording (your
-`checkout.session.completed` handler)
-
-Inside your Stripe webhook handler, after confirming `payment_status` is `'paid'`
-and after any idempotency check, add:
+Wherever you build the `URLSearchParams` for `POST
+https://api.stripe.com/v1/checkout/sessions`, in **every** branch that creates
+a session, after the params are built and before the fetch:
 
 ```js
-// --- Affiliate conversion recording ---
-try {
-  const affiliateId = session.metadata?.affiliate_id;
-  if (affiliateId && env.DB) {
-    const aff = await env.DB.prepare(
-      "SELECT commission_pct FROM affiliates WHERE id=?1"
-    ).bind(affiliateId).first();
-    if (aff) {
-      const commission = Math.round(
-        session.amount_total * aff.commission_pct / 100
-      );
-      await env.DB.prepare(`
-        INSERT INTO conversions
-          (affiliate_id, stripe_session_id, stripe_event_id, payment_intent,
-           customer_email, amount_cents, commission_cents, status, created_at)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,'pending',?8)
-        ON CONFLICT(stripe_session_id) DO NOTHING
-      `).bind(
-        affiliateId, session.id, event.id,
-        session.payment_intent || null,
-        session.customer_details?.email || null,
-        session.amount_total, commission, Date.now()
-      ).run();
-    }
-  }
-} catch (err) {
-  console.error("Affiliate conversion insert failed:", err.message);
-}
-// --- end ---
+import { attachAffiliateAttribution } from "cf-affiliate";
+
+await attachAffiliateAttribution(params, request, env);
 ```
 
-### Integration 4 — Route registration (your Worker entry point)
+Appends `client_reference_id` (only if you haven't set it yourself),
+`metadata[affiliate_id]`, `metadata[affiliate_code]`, and — once the affiliate
+has been approved — `discounts[0][promotion_code]` for the buyer discount.
+No-op when there's no cookie, no DB binding, or no active affiliate.
 
-Add the imports and route tuples for the 9 affiliate API endpoints:
+### 4 · Conversion recording (`recordConversion`)
+
+In your Stripe webhook handler, once `payment_status` is `'paid'`:
 
 ```js
-import { onRequestPost as affLoginPost, onRequestGet as affLoginGet } from "../functions/api/affiliate/login.js";
-import { onRequestGet as affMeGet } from "../functions/api/affiliate/me.js";
-import { onRequestPost as affLogoutPost } from "../functions/api/affiliate/logout.js";
-import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from "../functions/api/admin/affiliates.js";
-import { onRequestPost as adminAffiliateApprove } from "../functions/api/admin/affiliate-approve.js";
-import { onRequestGet as adminConversionsGet } from "../functions/api/admin/conversions.js";
-import { onRequestPost as adminConversionApprove } from "../functions/api/admin/conversion-approve.js";
-import { onRequestPost as adminPayoutsRun } from "../functions/api/admin/payouts-run.js";
+import { recordConversion } from "cf-affiliate";
 
-const affiliateRoutes = [
-  ["POST", "/api/affiliate/login", affLoginPost],
-  ["GET",  "/api/affiliate/login", affLoginGet],
-  ["GET",  "/api/affiliate/me", affMeGet],
-  ["POST", "/api/affiliate/logout", affLogoutPost],
-  ["GET",  "/api/admin/affiliates", adminAffiliatesGet],
-  ["POST", "/api/admin/affiliates", adminAffiliatesPost],
-  ["POST", "/api/admin/affiliate-approve", adminAffiliateApprove],
-  ["GET",  "/api/admin/conversions", adminConversionsGet],
-  ["POST", "/api/admin/conversion-approve", adminConversionApprove],
-  ["POST", "/api/admin/payouts-run", adminPayoutsRun],
-];
+ctx.waitUntil(recordConversion(session, event, env));
 ```
+
+Idempotent (`UNIQUE(stripe_session_id)` + `ON CONFLICT DO NOTHING`) and
+best-effort — a failed insert logs, it never fails your webhook.
 
 ---
 
-## Admin workflow
+## Affiliate lifecycle
+
+**Self-serve:** candidates apply via a form posting `{email, name?, message?}`
+to `/api/affiliate/apply` (this repo's `examples/portal.html` is a minimal
+reference implementation of the form + login UX). The endpoint
+honeypots bots (`website` field must stay empty), always answers `200
+{success:true}` once the payload is well-formed (anti-enumeration), and lands
+the application as a `status='pending'` row with `source='application'`.
+
+**Admin-created:** `POST /api/admin/affiliates` still works exactly as before —
+it creates a pending row with `source='admin'` and emails a magic-link invite.
+
+**Approval** (either origin): `POST /api/admin/affiliate-approve` activates the
+affiliate, mints their Stripe promo code, creates the Connect Express account
+when available, and now **emails the applicant their acceptance** — referral
+link, discount code, commission terms, and dashboard sign-in. Approval
+succeeds even if that email fails (it's retried on re-run, like the Connect
+step).
 
 ```bash
-# Create an affiliate (sends a magic-link invite email)
-curl -X POST https://yoursite.com/api/admin/affiliates \
-  -H "x-admin-token: $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"partner@example.com"}'
+# Review the queue (applications have source='application' + message)
+curl https://yoursite.com/api/admin/affiliates -H "x-admin-token: $ADMIN_TOKEN"
 
-# Approve them (mints promo code, creates Connect Express account)
+# Approve (mints promo code, creates Connect account, emails the affiliate)
 curl -X POST https://yoursite.com/api/admin/affiliate-approve \
-  -H "x-admin-token: $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"id":1}'
+  -H "x-admin-token: $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"id":1}'
 
 # Review pending conversions
 curl https://yoursite.com/api/admin/conversions?status=pending \
@@ -278,15 +170,45 @@ curl https://yoursite.com/api/admin/conversions?status=pending \
 
 # Approve a conversion
 curl -X POST https://yoursite.com/api/admin/conversion-approve \
-  -H "x-admin-token: $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
+  -H "x-admin-token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
   -d '{"id":1,"approved":true}'
 
 # Run payouts (Stripe Transfer for Connect affiliates, manual for others)
 curl -X POST https://yoursite.com/api/admin/payouts-run \
-  -H "x-admin-token: $ADMIN_TOKEN" \
-  -H "Content-Type: application/json"
+  -H "x-admin-token: $ADMIN_TOKEN" -H "Content-Type: application/json"
 ```
+
+---
+
+## Files
+
+| Path | What |
+|---|---|
+| `src/index.js` | Public API — the four exports |
+| `src/route.js` | Route table + `handleAffiliateApi` |
+| `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
+| `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
+| `src/webhook.js` | Conversion recording (`recordConversion`) |
+| `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
+| `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
+| `functions/api/_email.js` | Transactional email (Brevo default, configurable) |
+| `functions/api/affiliate/apply.js` | Self-serve application endpoint |
+| `functions/api/affiliate/login.js` | Rate-limited magic-link login |
+| `functions/api/affiliate/me.js` | Authenticated dashboard JSON |
+| `functions/api/affiliate/logout.js` | Clear session cookie |
+| `functions/api/admin/_gate.js` | x-admin-token gate |
+| `functions/api/admin/affiliates.js` | List + create affiliates |
+| `functions/api/admin/affiliate-approve.js` | Mint promo code + Connect account + acceptance email |
+| `functions/api/admin/conversions.js` | List conversions |
+| `functions/api/admin/conversion-approve.js` | Approve/reject conversions |
+| `functions/api/admin/payouts-run.js` | Stripe Transfer or manual payout |
+| `tests/unit/` | Unit tests (crypto, auth, gate, email) |
+| `migrations/0001_affiliates.sql` | Core schema (4 tables, UNIQUE idempotency) |
+| `migrations/0002_affiliate_applications.sql` | Self-serve application columns |
+
+Handlers keep their Pages-Functions signatures (`onRequestGet`/`onRequestPost`
+receiving `{request, env, ctx}`), so a consumer can also mount individual
+routes itself — see `src/route.js` for the exact paths.
 
 ## Environment vars
 
@@ -298,13 +220,17 @@ curl -X POST https://yoursite.com/api/admin/payouts-run \
 | `BREVO_API_KEY` | required | Transactional email (Brevo default) |
 | `EMAIL_URL` | optional | Override email API endpoint (default `https://api.brevo.com/v3/smtp/email`) |
 | `EMAIL_AUTH_HEADER` | optional | Override auth header name (default `api-key`) |
+| `EMAIL_SENDER_NAME` | optional | From display name (default `Store`) |
+| `EMAIL_SENDER_ADDRESS` | optional | From address (default `hello@example.com`) |
+| `ADMIN_EMAIL` | optional | Where admin notifications go |
 | `ADMIN_TOKEN` | `wrangler secret put` | Admin API gate |
+| `AFFILIATE_REF_COOKIE` | optional | Attribution cookie name (default `affiliate_ref`) |
 | `AFFILIATE_IP_SALT` | optional | IP hash salt |
 
 ## Tests
 
 ```bash
-pnpm test        # 37 tests — pure JS, no network, no Stripe
+pnpm test        # pure JS, no network, no Stripe
 pnpm test:watch  # re-run on file changes
 ```
 

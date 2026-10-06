@@ -1,8 +1,19 @@
 {
   "name": "cf-affiliate",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
+  "description": "Self-hosted affiliate program for Cloudflare Workers + Stripe: referral links, checkout attribution, conversions, payouts, self-serve applications.",
+  "license": "MIT",
   "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "functions",
+    "migrations",
+    "examples"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"

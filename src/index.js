@@ -1,60 +1,31 @@
-// cf-affiliate — Worker entry point (template).
+// cf-affiliate — public API.
 //
-// This is a STUB that imports the 9 affiliate API routes. The four integration
-// snippets below show where to add affiliate logic to your existing Worker.
+// Four exports connect the library to an existing Worker (see README):
 //
-// For a full integration guide with code snippets, see:
-//   README.md (#integration)
+//   handleAffiliateApi(request, env, ctx)
+//       Serves every /api/affiliate/* and /api/admin/{affiliates,
+//       affiliate-approve,conversions,conversion-approve,payouts-run} route.
+//       Returns a Response for its paths, null otherwise — register it BEFORE
+//       your own route table; anything you serve first simply wins.
+//
+//   applyAffiliateRef(request, env, respond)
+//       Ref middleware. Pass your asset fallthrough as `respond`; returns a
+//       Response with the attribution cookie appended, or null when the URL
+//       has no ?ref= (or the code is unknown) so you fall through untouched.
+//
+//   attachAffiliateAttribution(params, request, env)
+//       Await this on your Checkout Session URLSearchParams before POSTing to
+//       Stripe. Adds client_reference_id, metadata, and the buyer-discount
+//       promotion code. No-op without a cookie/DB/active affiliate.
+//
+//   recordConversion(session, event, env)
+//       Await (or ctx.waitUntil) in your webhook's paid-session branch.
+//       Idempotent INSERT ... ON CONFLICT DO NOTHING; never throws.
+//
+// The functions/api/** handlers are imported directly so a consumer can also
+// mount individual routes itself (paths unchanged from earlier releases).
 
-import { onRequestPost as affLoginPost, onRequestGet as affLoginGet } from "../functions/api/affiliate/login.js";
-import { onRequestGet as affMeGet } from "../functions/api/affiliate/me.js";
-import { onRequestPost as affLogoutPost } from "../functions/api/affiliate/logout.js";
-import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from "../functions/api/admin/affiliates.js";
-import { onRequestPost as adminAffiliateApprove } from "../functions/api/admin/affiliate-approve.js";
-import { onRequestGet as adminConversionsGet } from "../functions/api/admin/conversions.js";
-import { onRequestPost as adminConversionApprove } from "../functions/api/admin/conversion-approve.js";
-import { onRequestPost as adminPayoutsRun } from "../functions/api/admin/payouts-run.js";
-
-const routes = [
-  ["POST", "/api/affiliate/login", affLoginPost],
-  ["GET",  "/api/affiliate/login", affLoginGet],
-  ["GET",  "/api/affiliate/me", affMeGet],
-  ["POST", "/api/affiliate/logout", affLogoutPost],
-  ["GET",  "/api/admin/affiliates", adminAffiliatesGet],
-  ["POST", "/api/admin/affiliates", adminAffiliatesPost],
-  ["POST", "/api/admin/affiliate-approve", adminAffiliateApprove],
-  ["GET",  "/api/admin/conversions", adminConversionsGet],
-  ["POST", "/api/admin/conversion-approve", adminConversionApprove],
-  ["POST", "/api/admin/payouts-run", adminPayoutsRun],
-];
-
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-
-    // -------------------------------------------------------------------
-    // INTEGRATION 1: Ref-tracking middleware
-    // Before the asset fallthrough, read ?ref= and set a first-party
-    // attribution cookie. See SITE_INTEGRATION.md for the code snippet.
-    // -------------------------------------------------------------------
-    // if (url.searchParams.get("ref")) { ... applyAffiliateRef(...) ... }
-
-
-    // -------------------------------------------------------------------
-    // Route matching for affiliate API endpoints
-    // -------------------------------------------------------------------
-    for (const [method, path, handler] of routes) {
-      if (method === request.method && path === url.pathname) {
-        return handler({ request, env, ctx, params: {} });
-      }
-    }
-
-    // -------------------------------------------------------------------
-    // Your existing site logic goes here:
-    //   - Stripe Checkout Session creation (INTEGRATION 2)
-    //   - Stripe webhook handler (INTEGRATION 3)
-    //   - Static assets / page serving
-    // -------------------------------------------------------------------
-    return new Response("cf-affiliate worker running", { status: 200 });
-  },
-};
+export { handleAffiliateApi, affiliateRoutes } from './route.js';
+export { applyAffiliateRef, refCookieName, DEFAULT_REF_COOKIE } from './ref.js';
+export { attachAffiliateAttribution } from './checkout.js';
+export { recordConversion } from './webhook.js';
