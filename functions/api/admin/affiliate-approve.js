@@ -35,7 +35,7 @@ export async function onRequestPost(context) {
     // Look up the affiliate (must be pending — also allows re-running for
     // approved affiliates that don't have a connect account yet).
     const aff = await db.prepare(
-        "SELECT id, code, email, name FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
+        "SELECT id, code, email, name, commission_pct, promo_code_id FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
     ).bind(id).first();
     if (!aff) {
         return Response.json({ ok: false, error: 'Affiliate not found or already fully approved' }, { status: 404 });
@@ -50,25 +50,30 @@ export async function onRequestPost(context) {
     const promoCode = (aff.code + '10').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const couponName = coupon || DEFAULT_COUPON;
 
-    const promoResp = await fetch('https://api.stripe.com/v1/promotion_codes', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${stripeKey}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-            coupon: couponName,
-            code: promoCode,
-            max_redemptions: '0',
-            'metadata[affiliate_id]': String(aff.id),
-        }),
-    });
-    const promoData = await promoResp.json();
-    if (!promoResp.ok || promoData.error) {
-        return Response.json({
-            ok: false,
-            error: `Failed to create promo code: ${promoData.error?.message || promoResp.status}`,
-        }, { status: 502 });
+    let promoData = { id: aff.promo_code_id, code: promoCode };
+    if (!aff.promo_code_id) {
+        const promoResp = await fetch('https://api.stripe.com/v1/promotion_codes', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${stripeKey}`,
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                coupon: couponName,
+                code: promoCode,
+                'metadata[affiliate_id]': String(aff.id),
+            }),
+        });
+        promoData = await promoResp.json();
+        if (!promoResp.ok || promoData.error) {
+            return Response.json({
+                ok: false,
+                error: `Failed to create promo code: ${promoData.error?.message || promoResp.status}`,
+            }, { status: 502 });
+        }
+        // Save before Connect setup so a retry doesn't mint a duplicate code.
+        await db.prepare('UPDATE affiliates SET promo_code_id=?1 WHERE id=?2')
+            .bind(promoData.id, aff.id).run();
     }
 
     // --- Phase D: Create a Connect Express account (best-effort) ---
@@ -152,7 +157,7 @@ export async function onRequestPost(context) {
                     <p>Your application to the affiliate program has been approved. Here's everything you need:</p>
                     <p><strong>Your referral link:</strong><br>${origin}/?ref=${encodeURIComponent(aff.code)}</p>
                     <p><strong>Your audience discount code:</strong> ${escapeHtml(promoData.code || promoCode)} (10% off, applied automatically via your link)</p>
-                    <p><strong>Your commission:</strong> 20% of each attributed sale, paid monthly.</p>
+                    <p><strong>Your commission:</strong> ${aff.commission_pct}% of each attributed sale, paid monthly.</p>
                     <p>Sign in to your dashboard to see clicks and conversions in real time:<br><a href="${loginUrl}">${loginUrl}</a></p>
                     <p>Sign-in is passwordless — enter your email and we'll send you a one-time link.</p>
                 `,

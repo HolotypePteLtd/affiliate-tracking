@@ -24,9 +24,15 @@ export async function applyAffiliateRef(request, env, respond) {
     if (!code) return null;
     const cookieName = refCookieName(env);
 
-    const aff = await env.DB.prepare(
-        "SELECT id, code FROM affiliates WHERE code=?1 AND status='active'"
-    ).bind(code).first();
+    let aff;
+    try {
+        aff = await env.DB.prepare(
+            "SELECT id, code FROM affiliates WHERE code=?1 AND status='active'"
+        ).bind(code).first();
+    } catch (err) {
+        console.error('Affiliate referral lookup failed:', err.message);
+        return null;
+    }
     if (!aff) return null;
 
     // One click per fresh referral: a visitor already carrying this code (page
@@ -46,7 +52,13 @@ export async function applyAffiliateRef(request, env, respond) {
         }
     }
 
-    const assetRes = await respond();
+    let assetRes;
+    try {
+        assetRes = await respond();
+    } catch (err) {
+        console.error('Affiliate asset fetch failed:', err.message);
+        return null;
+    }
     if (!(assetRes instanceof Response)) return null;
     const headers = new Headers(assetRes.headers);
     headers.append('Set-Cookie',

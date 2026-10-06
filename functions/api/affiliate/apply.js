@@ -50,26 +50,25 @@ export async function onRequestPost(context) {
     const normalizedEmail = email.toLowerCase();
 
     try {
-        await db.prepare(`
-            INSERT INTO affiliates (email, name, code, status, commission_pct, source, message, applied_at, created_at)
-            VALUES (?1,?2,?3,'pending',20,?4,?5,?6,?6)
-        `).bind(
-            normalizedEmail,
-            name,
-            // Provisional referral slug (email local-part, sanitized). UNIQUE
-            // protects against collisions; the admin can set a real code via
-            // POST /api/admin/affiliates before approving if they want.
-            slugFromEmail(normalizedEmail),
-            'application',
-            message,
-            Date.now()
-        ).run();
-    } catch (err) {
-        if (err.message?.includes('UNIQUE')) {
-            // Already applied (or the slug is taken). Same success body either
-            // way — anti-enumeration.
-            return Response.json({ success: true });
+        let inserted = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            const code = attempt === 0 ? slugFromEmail(normalizedEmail)
+                : `${slugFromEmail(normalizedEmail)}-${crypto.randomUUID()}`;
+            try {
+                const result = await db.prepare(`
+                    INSERT INTO affiliates (email, name, code, status, commission_pct, source, message, applied_at, created_at)
+                    VALUES (?1,?2,?3,'pending',20,?4,?5,?6,?6)
+                    ON CONFLICT(email) DO NOTHING
+                `).bind(normalizedEmail, name, code, 'application', message, Date.now()).run();
+                if (!result.meta?.changes) return Response.json({ success: true });
+                inserted = true;
+                break;
+            } catch (err) {
+                if (!err.message?.includes('UNIQUE') || attempt === 4) throw err;
+            }
         }
+        if (!inserted) throw new Error('Could not allocate a referral code');
+    } catch (err) {
         console.error('Affiliate application insert failed:', err.message);
         return Response.json(
             { success: false, error: 'Could not submit application' },
@@ -80,7 +79,7 @@ export async function onRequestPost(context) {
     // Best-effort admin notification. Never gates the applicant's response.
     await notifyAdmin(env, {
         subject: 'New affiliate application',
-        htmlContent:
+        body:
             `<p><strong>Email:</strong> ${escapeHtml(normalizedEmail)}</p>` +
             `<p><strong>Name:</strong> ${escapeHtml(name || '—')}</p>` +
             `<p><strong>Message:</strong></p><p>${escapeHtml(message || '—').replace(/\n/g, '<br>')}</p>` +

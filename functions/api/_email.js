@@ -63,9 +63,14 @@ export async function sendEmail(apiKey, params, env = {}) {
 export async function notifyAdmin(env, { subject, body }) {
     const apiKey = env.BREVO_API_KEY;
     if (!apiKey) return;
-    await sendEmail(apiKey, {
-        to: [{ email: adminEmail(env) }],
-        subject,
-        htmlContent: body,
-    }, env);
+    try {
+        const response = await sendEmail(apiKey, {
+            to: [{ email: adminEmail(env) }],
+            subject,
+            htmlContent: body,
+        }, env);
+        if (!response.ok) console.error('Admin notification failed:', response.status);
+    } catch (err) {
+        console.error('Admin notification failed:', err.message);
+    }
 }
