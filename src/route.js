@@ -10,11 +10,15 @@ import { onRequestPost as applyPost } from '../functions/api/affiliate/apply.js'
 import { onRequestGet as affMeGet } from '../functions/api/affiliate/me.js';
 import { onRequestGet as affExportGet } from '../functions/api/affiliate/export.js';
 import { onRequestPost as affLogoutPost } from '../functions/api/affiliate/logout.js';
+import { onRequestGet as affConnectOnboarding } from '../functions/api/affiliate/connect-onboarding.js';
 import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from '../functions/api/admin/affiliates.js';
 import { onRequestPost as adminAffiliateApprove } from '../functions/api/admin/affiliate-approve.js';
+import { onRequestPost as adminAffiliateStatus } from '../functions/api/admin/affiliate-status.js';
+import { onRequestPost as adminAffiliateRevokeSessions } from '../functions/api/admin/affiliate-revoke-sessions.js';
 import { onRequestGet as adminConversionsGet } from '../functions/api/admin/conversions.js';
 import { onRequestPost as adminConversionApprove } from '../functions/api/admin/conversion-approve.js';
 import { onRequestPost as adminPayoutsRun } from '../functions/api/admin/payouts-run.js';
+import { onRequestPost as adminPayoutsReconcile } from '../functions/api/admin/payouts-reconcile.js';
 import { onRequestGet as adminPayoutsGet } from '../functions/api/admin/payouts.js';
 import { onRequestPost as adminLogin } from '../functions/api/admin/login.js';
 import { onRequestPost as adminLogout } from '../functions/api/admin/logout.js';
@@ -35,12 +39,16 @@ export const affiliateRoutes = [
     ['GET', '/api/affiliate/me', affMeGet],
     ['GET', '/api/affiliate/export', affExportGet],
     ['POST', '/api/affiliate/logout', affLogoutPost],
+    ['GET', '/api/affiliate/connect-onboarding', affConnectOnboarding],
     ['GET', '/api/admin/affiliates', adminAffiliatesGet],
     ['POST', '/api/admin/affiliates', adminAffiliatesPost],
     ['POST', '/api/admin/affiliate-approve', adminAffiliateApprove],
+    ['POST', '/api/admin/affiliate-status', adminAffiliateStatus],
+    ['POST', '/api/admin/affiliate-revoke-sessions', adminAffiliateRevokeSessions],
     ['GET', '/api/admin/conversions', adminConversionsGet],
     ['POST', '/api/admin/conversion-approve', adminConversionApprove],
     ['POST', '/api/admin/payouts-run', adminPayoutsRun],
+    ['POST', '/api/admin/payouts-reconcile', adminPayoutsReconcile],
     ['GET', '/api/admin/payouts', adminPayoutsGet],
 ];
 

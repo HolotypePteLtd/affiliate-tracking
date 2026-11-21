@@ -18,8 +18,38 @@ import { requireAdmin } from './_gate.js';
 import { sendEmail, escapeHtml } from '../_email.js';
 import { readJsonObject } from '../_public.js';
 import { isLocalAffiliateDev } from '../../../src/dev.js';
+import { createOnboardingLink, stripeRequest } from '../../../src/stripe.js';
 
 const DEFAULT_COUPON = 'affiliate-10';
+
+async function createPromotion(env, affiliate, coupon, baseCode) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const suffix = attempt ? `X${affiliate.id.toString(36).toUpperCase()}${attempt > 1 ? attempt : ''}` : '';
+        const code = baseCode + suffix;
+        // An inactive Stripe code may still belong to a suspended affiliate.
+        const reserved = await env.DB.prepare('SELECT id FROM affiliates WHERE promo_code=?1 COLLATE NOCASE AND id!=?2 LIMIT 1')
+            .bind(code, affiliate.id).first();
+        if (reserved) continue;
+        try {
+            const promotion = await stripeRequest(env, 'promotion_codes', {
+                // Keep the original key for the original request, including
+                // approvals interrupted before their promo id was saved.
+                idempotencyKey: attempt
+                    ? `aff_promo_retry_${affiliate.id}_${attempt}_${coupon}`
+                    : `aff_promo_${affiliate.id}_${coupon}`,
+                form: { coupon, code, 'metadata[affiliate_id]': String(affiliate.id) },
+            });
+            if (!promotion.id?.startsWith('promo_')) throw new Error('Stripe returned an invalid promotion code');
+            return { id: promotion.id, code: promotion.code || code };
+        } catch (error) {
+            const collision = (!error.param || error.param === 'code') &&
+                (['resource_already_exists', 'promotion_code_already_exists'].includes(error.code) ||
+                 /promotion code.*(?:already (?:exists|in use)|must be unique)/i.test(error.message));
+            if (!collision || attempt === 4) throw error;
+        }
+    }
+    throw new Error('No available Stripe promotion code for this affiliate');
+}
 
 export async function onRequestPost(context) {
     const gate = await requireAdmin(context.env, context.request);
@@ -37,7 +67,7 @@ export async function onRequestPost(context) {
     // Look up the affiliate (must be pending — also allows re-running for
     // approved affiliates that don't have a connect account yet).
     const aff = await db.prepare(
-        "SELECT id, code, email, name, status, commission_pct, promo_code_id, source FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
+        "SELECT id, code, email, name, status, commission_pct, promo_code_id, promo_code, source FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
     ).bind(id).first();
     if (!aff) {
         return Response.json({ ok: false, error: 'Affiliate not found or already fully approved' }, { status: 404 });
@@ -47,7 +77,7 @@ export async function onRequestPost(context) {
         if (aff.source !== 'local-demo') {
             return Response.json({ ok: false, error: 'Local demo mode can only approve demo partners' }, { status: 409 });
         }
-        await db.prepare("UPDATE affiliates SET status='active' WHERE id=?1").bind(aff.id).run();
+        await db.prepare("UPDATE affiliates SET status='active' WHERE id=?1 AND status='pending'").bind(aff.id).run();
         return Response.json({ ok: true, affiliate_id: aff.id, demo: true });
     }
 
@@ -60,32 +90,26 @@ export async function onRequestPost(context) {
     const promoCode = (aff.code + '10').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const couponName = coupon || DEFAULT_COUPON;
 
-    let promoData = { id: aff.promo_code_id, code: promoCode };
+    let promoData = { id: aff.promo_code_id, code: aff.promo_code || promoCode };
     if (!aff.promo_code_id) {
-        const promoResp = await fetch('https://api.stripe.com/v1/promotion_codes', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${stripeKey}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Idempotency-Key': `aff_promo_${aff.id}_${couponName}`,
-            },
-            body: new URLSearchParams({
-                coupon: couponName,
-                code: promoCode,
-                'metadata[affiliate_id]': String(aff.id),
-            }),
-            signal: AbortSignal.timeout(10000),
-        });
-        promoData = await promoResp.json();
-        if (!promoResp.ok || promoData.error) {
+        try {
+            promoData = await createPromotion(env, aff, couponName, promoCode);
+        } catch (error) {
             return Response.json({
                 ok: false,
-                error: `Failed to create promo code: ${promoData.error?.message || promoResp.status}`,
+                error: `Failed to create promo code: ${error.message}`,
             }, { status: 502 });
         }
-        // Save before Connect setup so a retry doesn't mint a duplicate code.
-        await db.prepare('UPDATE affiliates SET promo_code_id=?1 WHERE id=?2')
-            .bind(promoData.id, aff.id).run();
+        // Preserve the code chosen by the first request to save it.
+        const saved = await db.prepare("UPDATE affiliates SET promo_code_id=?1, promo_code=?2 WHERE id=?3 AND promo_code_id IS NULL AND status IN ('pending','active')")
+            .bind(promoData.id, promoData.code, aff.id).run();
+        if (!saved.meta.changes) {
+            const current = await db.prepare('SELECT status, promo_code_id, promo_code FROM affiliates WHERE id=?1').bind(aff.id).first();
+            if (!current?.promo_code_id || current.status === 'suspended') {
+                return Response.json({ ok: false, error: 'Affiliate status changed during approval' }, { status: 409 });
+            }
+            promoData = { id: current.promo_code_id, code: current.promo_code || promoCode };
+        }
     }
 
     // --- Phase D: Create a Connect Express account (best-effort) ---
@@ -96,72 +120,37 @@ export async function onRequestPost(context) {
     let connectAccountId = null;
     let connectOnboardingUrl = null;
     try {
-        const acctResp = await fetch('https://api.stripe.com/v1/accounts', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${stripeKey}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Idempotency-Key': `aff_connect_${aff.id}`,
-            },
-            body: new URLSearchParams({
+        const account = await stripeRequest(env, 'accounts', {
+            idempotencyKey: `aff_connect_${aff.id}`,
+            form: {
                 type: 'express',
                 email: aff.email,
                 'business_type': 'individual',
                 'capabilities[transfers][requested]': 'true',
                 'metadata[affiliate_id]': String(aff.id),
-            }),
-            signal: AbortSignal.timeout(10000),
+            },
         });
-        const acctData = await acctResp.json();
-        if (acctResp.ok && acctData.id && acctData.id.startsWith('acct_')) {
-            connectAccountId = acctData.id;
-
-            // Generate a one-time onboarding link so the affiliate can
-            // complete KYC/tax/bank at Stripe. Use the request origin —
-            // NOT SITE_URL — so the link always points back to the same
-            // worker (preview vs production).
-            const origin = new URL(context.request.url).origin;
-            const linkResp = await fetch('https://api.stripe.com/v1/account_links', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${stripeKey}`,
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    account: connectAccountId,
-                    refresh_url: `${origin}/affiliates/dashboard/`,
-                    return_url: `${origin}/affiliates/dashboard/`,
-                    type: 'account_onboarding',
-                }),
-                signal: AbortSignal.timeout(10000),
-            });
-            const linkData = await linkResp.json();
-            if (linkResp.ok && linkData.url) {
-                connectOnboardingUrl = linkData.url;
-            }
-        } else {
-            console.error('Connect account creation failed:', acctData.error?.message || acctResp.status);
-        }
+        if (!account.id?.startsWith('acct_')) throw new Error('Stripe returned an invalid Connect account');
+        connectAccountId = account.id;
+        connectOnboardingUrl = await createOnboardingLink(context.request, env, connectAccountId);
     } catch (err) {
-        console.error('Connect account creation threw:', err.message);
+        console.error('Connect setup failed:', err.message);
     }
 
     // --- Update the affiliate row ---
-    await db.prepare(
-        connectAccountId
-            ? "UPDATE affiliates SET status='active', promo_code_id=?1, stripe_account_id=?2 WHERE id=?3"
-            : "UPDATE affiliates SET status='active', promo_code_id=?1 WHERE id=?2"
-    ).bind(...(connectAccountId
-        ? [promoData.id, connectAccountId, aff.id]
-        : [promoData.id, aff.id]
-    )).run();
+    if (connectAccountId) {
+        await db.prepare('UPDATE affiliates SET stripe_account_id=?1 WHERE id=?2 AND stripe_account_id IS NULL')
+            .bind(connectAccountId, aff.id).run();
+    }
+    const activated = await db.prepare("UPDATE affiliates SET status='active' WHERE id=?1 AND status='pending'")
+        .bind(aff.id).run();
 
     // --- Acceptance email (best-effort, only on initial approval) ---
     // Sent after the row is active so the dashboard link works immediately.
     // Failure logs but doesn't fail the approval: the affiliate is already
     // active and the admin can resend by pointing them at /affiliates/.
     const origin = new URL(context.request.url).origin;
-    if (aff.status === 'pending' && env.BREVO_API_KEY) {
+    if (activated.meta.changes && env.BREVO_API_KEY) {
         try {
             const loginUrl = `${origin}/affiliates/`;
             const mailRes = await sendEmail(env.BREVO_API_KEY, {
@@ -192,7 +181,7 @@ export async function onRequestPost(context) {
             ? {
                 stripe_account_id: connectAccountId,
                 connect_onboarding_url: connectOnboardingUrl,
-                connect_note: 'Share the onboarding URL with the affiliate so they can complete KYC and link a payout bank account.',
+                connect_note: 'The affiliate can sign in and visit /api/affiliate/connect-onboarding for a fresh onboarding link.',
               }
             : {
                 connect_note: 'Stripe Connect account could not be created. The affiliate is still active and can receive manual payouts. Check that Stripe Connect is enabled and retry via POST /api/admin/affiliate-approve.',

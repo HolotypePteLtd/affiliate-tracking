@@ -6,7 +6,7 @@ metadata, provides a dashboard for affiliates, an admin API for management, and
 a self-serve application endpoint — all in your existing Worker with one D1
 database.
 
-**No client-side JavaScript. No third-party services. Four function calls.**
+**First-party referral tracking in your Worker, with Stripe Checkout and D1.**
 
 > This repo is published as a reference implementation and starting point for
 > your own fork. **Bug-fix PRs are welcome** — I'll review and merge them.
@@ -44,6 +44,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0001_affiliates.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -63,7 +64,7 @@ pnpm wrangler secret put ADMIN_TOKEN
 # 5. Run tests (Node.js 22.13+; local SQLite, no Stripe/D1 services)
 pnpm test
 
-# 6. Install the library and wire the four calls below, then deploy
+# 6. Install the library and wire the helpers below, then deploy
 pnpm add file:../cf-affiliate     # or: pnpm add github:you/cf-affiliate
 pnpm wrangler deploy
 ```
@@ -77,7 +78,7 @@ pnpm add file:../cf-affiliate          # sibling checkout, edit-and-reload
 pnpm add github:you/cf-affiliate#v0.2.0  # pinned
 ```
 
-## Integration — four calls
+## Worker integration
 
 ### 1 · Route the API (`handleAffiliateApi`)
 
@@ -100,13 +101,15 @@ D1, records one click, and appends the attribution cookie to whatever your
 site would have served anyway.
 
 ```js
-const refRes = await applyAffiliateRef(request, env, () => env.ASSETS.fetch(request));
+const refRes = await applyAffiliateRef(request, env, () => env.ASSETS.fetch(request), ctx);
 if (refRes) return refRes;
 
 return env.ASSETS.fetch(request);
 ```
 
 Optional: `AFFILIATE_IP_SALT` for IP hashing (`wrangler secret put AFFILIATE_IP_SALT`).
+Passing the Worker's execution context lets the click insert finish in the
+background. The three-argument form still waits for the insert.
 
 ### 3 · Checkout attribution (`attachAffiliateAttribution`)
 
@@ -156,7 +159,26 @@ Returns the attributed session, or null for an unattributed order. Pass that
 session and optional purchased line items as the fourth argument to enrich the
 record before email acknowledgement. Recording is idempotent by checkout
 session ID; retries preserve original affiliate, money, and financial status.
-No new database migration is needed for promotion precedence.
+
+### 5 · Refund and dispute recording (`recordRefund`)
+
+Subscribe your Stripe webhook to `charge.refunded` and `charge.dispute.created`.
+In the signature-verified handler, await the helper before acknowledging Stripe
+so failed database writes can be retried.
+
+```js
+import { recordRefund } from "cf-affiliate";
+
+if (event.type === "charge.refunded" || event.type === "charge.dispute.created") {
+    await recordRefund(event, env);
+}
+```
+
+A full or partial refund, or a new dispute, makes the entire unpaid
+commission ineligible. A refund received before checkout also applies when
+that checkout is recorded. Already paid commissions retain their payout
+history. If a transfer may have been sent already, reconcile the batch in
+the admin dashboard.
 
 ---
 
@@ -243,13 +265,40 @@ the same amount, destination, metadata, and Stripe idempotency key. Manual
 payouts remain bookkeeping only and mark their batch paid without a transfer.
 
 Automatic transfer retries stop 23 hours after the first attempt, before
-Stripe may expire the idempotency record. For expired or persistently failing
-batches, inspect the payout ID and Stripe transfer metadata before changing
-the database. If a transfer succeeded, finalize its payout as `sent` with the
-transfer ID and mark only its `payout_id` conversions paid in one transaction.
-If Stripe confirms no transfer occurred and no request is still in flight,
-mark the payout `failed` and reset its conversions to `approved` with
-`payout_id=NULL`; the next run creates a new batch and key.
+Stripe may expire the idempotency record. For a pending batch, choose
+**Reconcile payout** in the dashboard or POST `{"id":1}` to
+`/api/admin/payouts-reconcile`. A matching Stripe transfer finalizes the
+existing batch. After 24 hours, the endpoint can release a batch with no
+matching transfer. Confirm that no separate payment was made, then select
+the dashboard confirmation or POST `{"id":1,"action":"release"}`. The next
+payout run claims the remaining approved commissions under a fresh key.
+For a verified legacy transfer without attached conversions, pass the
+original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
+
+### Partner access and onboarding
+
+Admins can suspend or reactivate an approved partner from the dashboard or
+POST `{"id":1,"status":"suspended"}` (or `"active"`) to
+`/api/admin/affiliate-status`. The action updates the Stripe promotion code
+as well. If Stripe times out, retry the same action. **Revoke sessions**,
+also available via POST `{"id":1}` to
+`/api/admin/affiliate-revoke-sessions`, invalidates existing affiliate
+sessions and unredeemed links while keeping partner status.
+
+Every magic link can be redeemed once. This release switches both HTTPS
+session cookies to `__Host-` names and requires a fresh sign-in after
+upgrading. HTTP loopback development continues to use unprefixed names.
+
+Add a link to `/api/affiliate/connect-onboarding` in your affiliate dashboard
+for partners with a `stripe_account_id`. The endpoint directs the signed-in
+partner to a fresh single-use Stripe Account Link and also handles Stripe's
+expired-link refresh redirect.
+
+### TypeScript
+
+The package includes declarations for the public helpers and an
+`AffiliateEnv` type. Pass your Worker's generated environment and execution
+context to the helpers directly.
 
 ---
 
@@ -261,7 +310,7 @@ mark the payout `failed` and reset its conversions to `approved` with
 | `src/route.js` | Route table + `handleAffiliateApi` |
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
-| `src/webhook.js` | Conversion recording (`recordConversion`) |
+| `src/webhook.js` | Conversion, refund, and dispute recording |
 | `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
 | `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
 | `functions/api/_email.js` | Transactional email (Brevo default, configurable) |
@@ -275,6 +324,7 @@ mark the payout `failed` and reset its conversions to `approved` with
 | `functions/api/admin/conversions.js` | List conversions |
 | `functions/api/admin/conversion-approve.js` | Approve/reject conversions |
 | `functions/api/admin/payouts-run.js` | Stripe Transfer or manual payout |
+| `functions/api/admin/payouts-reconcile.js` | Pending batch reconciliation |
 | `tests/unit/` | Unit tests (crypto, auth, gate, email) |
 | `migrations/0001_affiliates.sql` | Complete schema: affiliates, applications, clicks, conversions, and durable payout batches |
 

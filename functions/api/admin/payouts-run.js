@@ -7,10 +7,8 @@
 import { requireAdmin } from './_gate.js';
 import { readJsonObject } from '../_public.js';
 import { isLocalAffiliateDev } from '../../../src/dev.js';
-
-// Stripe can prune idempotency records after 24 hours. Stop automatic retries
-// earlier so an old, ambiguous transfer cannot accidentally be sent twice.
-const TRANSFER_RETRY_WINDOW = 23 * 60 * 60 * 1000;
+import { stripeRequest } from '../../../src/stripe.js';
+import { finalizePayout, readPayout, releasePayout, transferGroup, TRANSFER_RETRY_WINDOW } from './_payout-batches.js';
 
 export async function onRequestPost(context) {
     const gate = await requireAdmin(context.env, context.request);
@@ -51,89 +49,74 @@ export async function onRequestPost(context) {
     for (const aff of affiliates) {
         const batch = await claimBatch(db, aff.id);
         if (!batch) continue; // A concurrent run may have finalized the batch.
-        let status = 'pending';
-        let stripeTransferId = null;
-        let error = null;
-
-        if (!batch.batch_key) {
-            error = 'Legacy pending payout requires manual reconciliation before another payout';
-        } else if (batch.currency && batch.currency !== 'usd') {
-            error = 'Non-USD pending payout requires manual reconciliation';
-        } else if (!Number.isFinite(batch.amount_cents) || batch.amount_cents <= 0) {
-            error = 'Pending payout has non-positive amount and requires manual reconciliation';
-        } else if (!batch.stripe_account_id) {
-            status = 'manual';
-        } else {
-            // Persist the first attempt time before sending money. The destination
-            // and amount were snapshotted when the batch was claimed.
-            await db.prepare(`
-                UPDATE payouts SET transfer_started_at=COALESCE(transfer_started_at, ?1)
-                WHERE id=?2
-            `).bind(Date.now(), batch.id).run();
-            const attempt = await db.prepare('SELECT transfer_started_at FROM payouts WHERE id=?1')
-                .bind(batch.id).first();
-            if (Date.now() - attempt.transfer_started_at >= TRANSFER_RETRY_WINDOW) {
-                error = 'Transfer retry window expired; reconcile this payout with Stripe before proceeding';
+        let error = await sendBatch(env, batch);
+        let current = await readPayout(db, batch.id);
+        if (current.status === 'pending' && current.has_refund) {
+            if (await releasePayout(db, batch.id)) {
+                error = 'A conversion was refunded before sending. Run payouts again for the remaining approved conversions.';
             } else {
-                try {
-                    const response = await fetch('https://api.stripe.com/v1/transfers', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'Idempotency-Key': `aff_transfer_${batch.batch_key}`,
-                        },
-                        body: new URLSearchParams({
-                            amount: String(batch.amount_cents),
-                            currency: 'usd',
-                            destination: batch.stripe_account_id,
-                            'metadata[affiliate_id]': String(batch.affiliate_id),
-                            'metadata[payout_id]': String(batch.id),
-                            transfer_group: `affiliate_payout_${batch.affiliate_id}`,
-                        }),
-                        signal: AbortSignal.timeout(10000),
-                    });
-                    const data = await response.json();
-                    if (response.ok && data.id?.startsWith('tr_')) {
-                        stripeTransferId = data.id;
-                        status = 'sent';
-                    } else {
-                        error = data.error?.message || `Stripe transfer failed (${response.status})`;
-                    }
-                } catch (err) {
-                    error = err.message;
-                }
+                error = 'A conversion was refunded after a transfer attempt. Reconcile this payout with Stripe.';
             }
+            current = await readPayout(db, batch.id);
         }
-
-        if (status !== 'pending') {
-            // Atomic finalization also makes overlapping retries harmless.
-            await db.batch([
-                db.prepare(`
-                    UPDATE payouts SET status=?1, stripe_transfer_id=?2, paid_at=COALESCE(paid_at,?4)
-                    WHERE id=?3 AND status='pending'
-                `).bind(status, stripeTransferId, batch.id, Date.now()),
-                db.prepare(`
-                    UPDATE conversions SET status='paid', paid_at=?1
-                    WHERE payout_id=?2 AND status='paying'
-                      AND EXISTS (SELECT 1 FROM payouts WHERE id=?2 AND status IN ('sent','manual'))
-                `).bind(Date.now(), batch.id),
-            ]);
-        } else {
-            console.error(`Payout ${batch.id} remains pending:`, error);
-        }
+        if (current.status === 'pending') console.error(`Payout ${batch.id} remains pending:`, error);
         payouts.push({
             affiliate_id: batch.affiliate_id,
             amount_cents: batch.amount_cents,
             payout_id: batch.id,
-            status,
-            ...(stripeTransferId ? { stripe_transfer_id: stripeTransferId } : {}),
-            ...(error ? { error } : {}),
+            status: current.status,
+            ...(current.stripe_transfer_id ? { stripe_transfer_id: current.stripe_transfer_id } : {}),
+            ...(error && ['pending', 'failed'].includes(current.status) ? { error } : {}),
         });
     }
 
-    const ok = payouts.every((p) => p.status !== 'pending');
+    const ok = payouts.every((p) => ['sent', 'manual'].includes(p.status));
     return Response.json({ ok, payouts }, { status: ok ? 200 : 502 });
+}
+
+async function sendBatch(env, batch) {
+    if (!batch.batch_key) return 'Legacy pending payout requires reconciliation before another payout';
+    if (batch.currency && batch.currency !== 'usd') return 'Non-USD pending payout requires reconciliation';
+    if (!Number.isFinite(batch.amount_cents) || batch.amount_cents <= 0) {
+        return 'Pending payout has non-positive amount and requires reconciliation';
+    }
+
+    const db = env.DB;
+    if (!batch.stripe_account_id) {
+        await finalizePayout(db, batch.id, 'manual', null);
+        return null;
+    }
+    const now = Date.now();
+    // Reserving the attempt and checking refunds use the same write. After
+    // reservation a webhook can block retries, but Stripe may already be in flight.
+    const attempt = await db.prepare(`
+        UPDATE payouts SET transfer_started_at=COALESCE(transfer_started_at, ?1)
+        WHERE id=?2 AND status='pending' AND stripe_transfer_id IS NULL
+          AND (transfer_started_at IS NULL OR transfer_started_at>?3)
+          AND NOT EXISTS (SELECT 1 FROM conversions WHERE payout_id=?2 AND status='refunded')
+        RETURNING id
+    `).bind(now, batch.id, now - TRANSFER_RETRY_WINDOW).first();
+    if (!attempt) return 'Transfer unavailable; reconcile this payout with Stripe before proceeding';
+
+    let transfer;
+    try {
+        transfer = await stripeRequest(env, 'transfers', {
+            idempotencyKey: `aff_transfer_${batch.batch_key}`,
+            form: {
+                amount: String(batch.amount_cents),
+                currency: 'usd',
+                destination: batch.stripe_account_id,
+                'metadata[affiliate_id]': String(batch.affiliate_id),
+                'metadata[payout_id]': String(batch.id),
+                transfer_group: transferGroup(batch.affiliate_id),
+            },
+        });
+        if (!transfer.id?.startsWith('tr_')) throw new Error('Stripe returned an invalid transfer ID');
+    } catch (error) {
+        return error.message;
+    }
+    await finalizePayout(db, batch.id, 'sent', transfer.id);
+    return null;
 }
 
 async function claimBatch(db, affiliateId) {

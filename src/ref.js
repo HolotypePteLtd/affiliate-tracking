@@ -12,20 +12,14 @@
 // setting AFFILIATE_REF_COOKIE in their Worker env. Use a __Host- name on
 // HTTPS and AFFILIATE_REF_LEGACY_COOKIE for a read-only migration fallback.
 // Resolved per-call since env differs per environment.
+import { hostCookieName } from './cookie.js';
+
 export const DEFAULT_REF_COOKIE = 'affiliate_ref';
 const REF_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 export function refCookieName(env, request) {
     const name = (env && env.AFFILIATE_REF_COOKIE) || DEFAULT_REF_COOKIE;
-    if (request && name.startsWith('__Host-')) {
-        const url = new URL(request.url);
-        // HTTP loopback development cannot rely on secure-cookie support.
-        // Production and preview keep the protected name, even on HTTP.
-        if (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
-            return name.slice('__Host-'.length);
-        }
-    }
-    return name;
+    return request ? hostCookieName(name, request.url) : name;
 }
 
 // Cookie headers contain no path/domain/creation-time information. Never use
@@ -62,7 +56,7 @@ function referralCookie(header, name) {
     return cookie;
 }
 
-export async function applyAffiliateRef(request, env, respond) {
+export async function applyAffiliateRef(request, env, respond, ctx) {
     if (!env.DB || typeof respond !== 'function' || request.method !== 'GET') return null;
     const code = new URL(request.url).searchParams.get('ref');
     if (!code) return null;
@@ -83,17 +77,9 @@ export async function applyAffiliateRef(request, env, respond) {
     // reloads, multi-page browsing) is not a second click.
     const existing = readAffiliateRef(request, env);
     if (existing !== aff.code) {
-        const ipHash = await hashIp(
-            request.headers.get('cf-connecting-ip'),
-            env.AFFILIATE_IP_SALT
-        );
-        try {
-            await env.DB.prepare(
-                'INSERT INTO clicks (affiliate_id, ip_hash, created_at) VALUES (?1,?2,?3)'
-            ).bind(aff.id, ipHash, Date.now()).run();
-        } catch (err) {
-            console.error('Affiliate click insert failed:', err.message);
-        }
+        const click = recordClick(request, env, aff.id);
+        if (ctx?.waitUntil) ctx.waitUntil(click);
+        else await click;
     }
 
     let assetRes;
@@ -118,6 +104,17 @@ export async function applyAffiliateRef(request, env, respond) {
         headers.append('Set-Cookie', `${legacyName}=; Max-Age=0; ${attributes}`);
     }
     return new Response(assetRes.body, { status: assetRes.status, headers });
+}
+
+async function recordClick(request, env, affiliateId) {
+    try {
+        const ipHash = await hashIp(request.headers.get('cf-connecting-ip'), env.AFFILIATE_IP_SALT);
+        await env.DB.prepare(
+            'INSERT INTO clicks (affiliate_id, ip_hash, created_at) VALUES (?1,?2,?3)'
+        ).bind(affiliateId, ipHash, Date.now()).run();
+    } catch (err) {
+        console.error('Affiliate click insert failed:', err.message);
+    }
 }
 
 async function hashIp(ip, salt) {

@@ -1,15 +1,15 @@
-import { readSession, readCookieValue, SESSION_COOKIE } from '../_affiliate-auth.js';
+import { affiliateSessionToken, readSession } from '../_affiliate-auth.js';
 import { currencyCode, currencyDecimals } from '../../../src/money.js';
 
 export async function signedInAffiliate(request, env) {
     if (!env.DB || !env.AFFILIATE_SESSION_SECRET) {
         return Response.json({ error: 'Affiliate login is not configured' }, { status: 503 });
     }
-    const id = await readSession(readCookieValue(request.headers.get('Cookie'), SESSION_COOKIE), env.AFFILIATE_SESSION_SECRET);
-    const affiliate = id ? await env.DB.prepare(
-        'SELECT id, code, name, email, commission_pct, status, stripe_account_id FROM affiliates WHERE id=?1'
-    ).bind(id).first() : null;
-    return affiliate?.status === 'active' ? affiliate
+    const claims = await readSession(affiliateSessionToken(request), env.AFFILIATE_SESSION_SECRET);
+    const affiliate = claims ? await env.DB.prepare(
+        "SELECT id, code, name, email, commission_pct, status, stripe_account_id FROM affiliates WHERE id=?1 AND status='active' AND session_version=?2"
+    ).bind(claims.sub, claims.version).first() : null;
+    return affiliate ? affiliate
         : Response.json({ error: 'unauthorized' }, { status: 401 });
 }
 

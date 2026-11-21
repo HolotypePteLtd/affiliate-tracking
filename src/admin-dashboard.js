@@ -43,7 +43,7 @@ __STYLESHEETS__
   <section id="payouts-panel" hidden>
     <div class="toolbar row spread"><h2>Recent payouts</h2><button id="run-payouts" class="primary">Run approved payouts</button></div>
     <p class="muted">Connect partners receive Stripe transfers. For manual partners, send payment separately before recording the payout.</p>
-    <div class="card scroll"><table><thead><tr><th scope="col">Date</th><th scope="col">Partner</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Stripe transfer</th></tr></thead><tbody id="payout-rows"></tbody></table><p id="payouts-empty" class="empty" hidden>No payouts yet.</p></div><p class="note">Showing the latest 200 payouts.</p>
+    <div class="card scroll"><table><thead><tr><th scope="col">Date</th><th scope="col">Partner</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Stripe transfer</th><th scope="col">Actions</th></tr></thead><tbody id="payout-rows"></tbody></table><p id="payouts-empty" class="empty" hidden>No payouts yet.</p></div><p class="note">Showing the latest 200 payouts.</p>
   </section>
 </section>
 <footer>Affiliate program administration</footer>
@@ -93,9 +93,9 @@ __STYLESHEETS__
     const td = cell(row, ''); const span = document.createElement('span'); span.textContent = status;
     span.className = 'badge ' + (['pending','active','suspended','approved','paying','paid','refunded','sent','failed','manual'].includes(status) ? status : ''); td.appendChild(span);
   }
-  function action(row, label, handler) {
-    const td = cell(row, ''); const button = document.createElement('button'); button.className = 'small'; button.textContent = label;
-    button.disabled = busy; button.addEventListener('click', () => mutate(handler)); td.appendChild(button);
+  function action(container, label, handler) {
+    const button = document.createElement('button'); button.className = 'small'; button.textContent = label;
+    button.disabled = busy; button.addEventListener('click', () => mutate(handler)); container.appendChild(button);
   }
   function render() {
     $('active-count').textContent = state.affiliates.filter(a => a.status === 'active').length;
@@ -105,23 +105,53 @@ __STYLESHEETS__
     $('affiliate-rows').replaceChildren(); $('affiliates-empty').hidden = partners.length > 0;
     partners.forEach(a => {
       const row = document.createElement('tr'); cell(row, a.name || a.email, a.email); badge(row, a.status); cell(row, a.code); cell(row, a.commission_pct + '%'); cell(row, a.clicks); cell(row, a.message || '—', a.source === 'application' ? 'Self-serve application' : a.source === 'local-demo' ? 'Local demo' : 'Added by admin');
-      if (a.status === 'pending') action(row, 'Approve partner', async () => {
-        if (!localDemo && !window.confirm('Activate ' + a.email + '? This creates their Stripe promotion code and sends an acceptance email.')) return null;
-        await api('/api/admin/affiliate-approve', { id: a.id }); return 'Partner approved.';
-      }); else cell(row, '—');
+      const actions = document.createElement('div'); actions.className = 'actions'; cell(row, '').appendChild(actions);
+      if (a.status === 'pending') {
+        action(actions, 'Approve partner', async () => {
+          if (!localDemo && !window.confirm('Activate ' + a.email + '? This creates their Stripe promotion code and sends an acceptance email.')) return null;
+          await api('/api/admin/affiliate-approve', { id: a.id }); return 'Partner approved.';
+        });
+      } else {
+        const status = a.status_change_target || (a.status === 'active' ? 'suspended' : 'active');
+        const label = status === 'suspended' ? 'Suspend' : 'Reactivate';
+        action(actions, label, async () => {
+          if (!window.confirm(label + ' ' + a.email + '?')) return null;
+          await api('/api/admin/affiliate-status', { id: a.id, status });
+          return status === 'suspended' ? 'Partner suspended.' : 'Partner reactivated.';
+        });
+        if (a.status === 'active') action(actions, 'Revoke sessions', async () => {
+          if (!window.confirm('Sign out ' + a.email + ' on all devices and invalidate their existing login links?')) return null;
+          await api('/api/admin/affiliate-revoke-sessions', { id: a.id });
+          return 'Partner sessions revoked.';
+        });
+      }
       $('affiliate-rows').appendChild(row);
     });
     const conversions = state.conversions.filter(c => !$('conversion-filter').value || c.status === $('conversion-filter').value);
     $('conversion-rows').replaceChildren(); $('conversions-empty').hidden = conversions.length > 0;
     conversions.forEach(c => {
       const row = document.createElement('tr'); cell(row, date(c.created_at)); cell(row, c.affiliate_name || c.affiliate_code); cell(row, c.customer_email); cell(row, money(c.amount_cents, c.currency)); cell(row, money(c.commission_cents, c.currency)); badge(row, c.status);
-      if (c.status === 'pending' || c.status === 'approved') action(row, c.status === 'pending' ? 'Approve' : 'Return to pending', async () => {
+      if (c.status === 'pending' || c.status === 'approved') action(cell(row, ''), c.status === 'pending' ? 'Approve' : 'Return to pending', async () => {
         await api('/api/admin/conversion-approve', { id: c.id, approved: c.status === 'pending' }); return 'Conversion updated.';
       }); else cell(row, '—');
       $('conversion-rows').appendChild(row);
     });
     $('payout-rows').replaceChildren(); $('payouts-empty').hidden = state.payouts.length > 0;
-    state.payouts.forEach(p => { const row = document.createElement('tr'); cell(row, date(p.created_at)); cell(row, p.affiliate_name || p.affiliate_code); cell(row, money(p.amount_cents, p.currency)); badge(row, p.status); cell(row, p.stripe_transfer_id); $('payout-rows').appendChild(row); });
+    state.payouts.forEach(p => {
+      const row = document.createElement('tr');
+      cell(row, date(p.created_at)); cell(row, p.affiliate_name || p.affiliate_code); cell(row, money(p.amount_cents, p.currency));
+      badge(row, p.status); cell(row, p.stripe_transfer_id);
+      if (p.status === 'pending' && !localDemo) action(cell(row, ''), 'Reconcile payout', async () => {
+        const data = await api('/api/admin/payouts-reconcile', { id: p.id });
+        if (data.status === 'sent') return 'Verified and recorded Stripe transfer ' + data.stripe_transfer_id + '.';
+        if (data.status !== 'pending') return 'Payout is already ' + data.status + '.';
+        if (!data.can_release) return 'Stripe shows no matching transfer yet. Check again after the 24-hour waiting period.';
+        if (!window.confirm('Stripe shows no matching transfer. Confirm that no payment was made outside Stripe and return this batch’s unpaid commissions to approved?')) return null;
+        const result = await api('/api/admin/payouts-reconcile', { id: p.id, action: 'release' });
+        return result.status === 'failed' ? 'Batch released. Run payouts again for eligible commissions.' : 'Payout is now ' + result.status + '.';
+      }); else cell(row, '—');
+      $('payout-rows').appendChild(row);
+    });
     $('run-payouts').disabled = busy || localDemo || !(state.conversions.some(c => c.status === 'approved') || state.payouts.some(p => p.status === 'pending'));
     $('run-payouts').title = localDemo ? 'Payments are disabled in local demo mode.' : '';
   }

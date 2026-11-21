@@ -45,13 +45,13 @@ export async function onRequestPost(context) {
     // Invite-only: only active affiliates can log in. Send a link only when the
     // email matches; the response is identical either way.
     const aff = await env.DB.prepare(
-        "SELECT id, email FROM affiliates WHERE email=?1 AND status='active'"
+        "SELECT id, session_version FROM affiliates WHERE email=?1 AND status='active'"
     )
         .bind(normalizedEmail)
         .first();
 
     if (aff) {
-        const token = await createMagicLink(aff.id, env.AFFILIATE_SESSION_SECRET);
+        const token = await createMagicLink(aff.id, env.AFFILIATE_SESSION_SECRET, aff.session_version);
         // Use the request origin — NOT SITE_URL — so the magic link always
         // points to the Worker that minted it (same secret -> verification
         // works). SITE_URL shouldn't be used for sign-in links; it points at
@@ -85,23 +85,22 @@ export async function onRequestGet(context) {
     const home = `${origin}/affiliates/?login=failed`;
 
     const token = url.searchParams.get('token');
-    if (!token || !env.AFFILIATE_SESSION_SECRET) {
+    if (!token || !env.DB || !env.AFFILIATE_SESSION_SECRET) {
         return Response.redirect(home, 302);
     }
 
-    const affiliateId = await verifyMagicLink(token, env.AFFILIATE_SESSION_SECRET);
-    if (!affiliateId) {
-        return Response.redirect(home, 302);
-    }
-
-    if (env.DB) {
-        const aff = await env.DB.prepare(
-            "SELECT id FROM affiliates WHERE id=?1 AND status='active'"
-        ).bind(affiliateId).first();
-        if (!aff) return Response.redirect(home, 302);
-    }
-
-    const session = await createSession(affiliateId, env.AFFILIATE_SESSION_SECRET);
+    const claims = await verifyMagicLink(token, env.AFFILIATE_SESSION_SECRET);
+    if (!claims) return Response.redirect(home, 302);
+    const session = await createSession(claims.sub, env.AFFILIATE_SESSION_SECRET, claims.version);
+    const now = Math.floor(Date.now() / 1000);
+    const [, redemption] = await env.DB.batch([
+        env.DB.prepare('DELETE FROM used_affiliate_magic_links WHERE expires_at <= ?1').bind(now),
+        env.DB.prepare(`INSERT OR IGNORE INTO used_affiliate_magic_links (jti, expires_at)
+            SELECT ?1, ?2 FROM affiliates
+            WHERE id=?3 AND status='active' AND session_version=?4 AND ?2 > ?5`)
+            .bind(claims.jti, claims.exp, claims.sub, claims.version, now),
+    ]);
+    if (!redemption.meta.changes) return Response.redirect(home, 302);
     const headers = new Headers({ Location: dash });
     headers.append('Set-Cookie', sessionCookieHeader(session, context.request.url));
     return new Response(null, { status: 302, headers });

@@ -21,7 +21,7 @@ async function setup(t) {
         async get(query = '') {
             return onRequestGet({
                 env: { DB, AFFILIATE_SESSION_SECRET: secret },
-                request: new Request('https://shop.example/api/affiliate/me' + query, { headers: { Cookie: 'aff_session=' + session } }),
+                request: new Request('https://shop.example/api/affiliate/me' + query, { headers: { Cookie: '__Host-aff_session=' + session } }),
             });
         },
     };

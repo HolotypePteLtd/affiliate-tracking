@@ -23,10 +23,10 @@ export async function devLogin({ request, env }) {
         return Response.json({ error: 'Run the local affiliate setup first.' }, { status: 503 });
     }
     const affiliate = await env.DB.prepare(
-        "SELECT id FROM affiliates WHERE email=?1 AND code=?2 AND source='local-demo' AND status='active'"
+        "SELECT id, session_version FROM affiliates WHERE email=?1 AND code=?2 AND source='local-demo' AND status='active'"
     ).bind(DEMO_EMAIL, DEMO_CODE).first();
     if (!affiliate) return Response.json({ error: 'Run the local affiliate setup first.' }, { status: 503 });
-    const session = await createSession(affiliate.id, env.AFFILIATE_SESSION_SECRET);
+    const session = await createSession(affiliate.id, env.AFFILIATE_SESSION_SECRET, affiliate.session_version);
     return Response.json({ ok: true }, { headers: {
         'Set-Cookie': sessionCookieHeader(session, request.url), 'Cache-Control': 'no-store',
     } });

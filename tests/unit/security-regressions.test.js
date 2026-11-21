@@ -159,7 +159,7 @@ describe('malformed JSON bodies and auth hardening', () => {
         const affRes = await affMe({
             env: { DB, AFFILIATE_SESSION_SECRET: 'sec' },
             request: new Request('https://shop.example/api/affiliate/me', {
-                headers: { Cookie: `aff_session=forged; aff_session=${affToken}` },
+                headers: { Cookie: `__Host-aff_session=forged; __Host-aff_session=${affToken}` },
             }),
         });
         expect(affRes.status).toBe(401);
@@ -167,7 +167,7 @@ describe('malformed JSON bodies and auth hardening', () => {
         const adminRes = await adminAffiliatesGet({
             env: { DB, ADMIN_TOKEN: 'admin-sec' },
             request: new Request('https://shop.example/api/admin/affiliates', {
-                headers: { Cookie: `aff_admin_session=forged; aff_admin_session=${adminToken}` },
+                headers: { Cookie: `__Host-aff_admin_session=forged; __Host-aff_admin_session=${adminToken}` },
             }),
         });
         expect(adminRes.status).toBe(401);

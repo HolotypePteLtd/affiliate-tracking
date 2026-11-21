@@ -1,13 +1,11 @@
-// Stateless, signed tokens for the affiliate auth flow: magic-link login
-// tokens (short-lived, emailed) and session cookies (long-lived, set as an
-// HttpOnly cookie). Same HMAC-SHA256 shape as the download tokens in
-// _download-token.js, reusing the shared crypto helpers. No storage needed —
-// verification is purely signature + expiry.
+// Signed affiliate tokens. D1 tracks redeemed magic links and the current
+// session version for each affiliate.
 
 import { importHmacKey, hmacHex, constantTimeCompare } from './_crypto-utils.js';
+import { authCookieHeader, hostCookieName } from '../../src/cookie.js';
 
 // Cookie name holding the affiliate session token.
-export const SESSION_COOKIE = 'aff_session';
+export const SESSION_COOKIE = '__Host-aff_session';
 
 const MAGIC_LINK_TTL = 15 * 60;          // 15 minutes
 const SESSION_TTL = 30 * 24 * 60 * 60;    // 30 days
@@ -80,36 +78,36 @@ async function verify(token, secret, purpose) {
 
 // --- Magic-link login tokens (emailed, 15-min TTL) ---
 
-export function createMagicLink(affiliateId, secret, ttlSeconds = MAGIC_LINK_TTL) {
-    return sign({ purpose: 'aff-login', sub: String(affiliateId) }, secret, ttlSeconds);
+export function createMagicLink(affiliateId, secret, version = 0) {
+    return sign({ purpose: 'aff-login', sub: String(affiliateId), version, jti: crypto.randomUUID() }, secret, MAGIC_LINK_TTL);
 }
 
 export async function verifyMagicLink(token, secret) {
     const claims = await verify(token, secret, 'aff-login');
-    return claims ? claims.sub : null;
+    return typeof claims?.jti === 'string' && Number.isSafeInteger(claims.version) ? claims : null;
 }
 
 // --- Session tokens (set as a cookie, 30-day TTL) ---
 
-export function createSession(affiliateId, secret, ttlSeconds = SESSION_TTL) {
-    return sign({ purpose: 'aff-session', sub: String(affiliateId) }, secret, ttlSeconds);
+export function createSession(affiliateId, secret, version = 0) {
+    return sign({ purpose: 'aff-session', sub: String(affiliateId), version }, secret, SESSION_TTL);
 }
 
 export async function readSession(token, secret) {
     const claims = await verify(token, secret, 'aff-session');
-    return claims ? claims.sub : null;
+    return Number.isSafeInteger(claims?.version) ? claims : null;
 }
 
-// Build a Set-Cookie header for the session token. Secure is only set when the
-// request is HTTPS so local `wrangler dev` (http) still stores the cookie.
+export function affiliateSessionToken(request) {
+    return readCookieValue(request.headers.get('Cookie'), hostCookieName(SESSION_COOKIE, request.url));
+}
+
 export function sessionCookieHeader(token, requestUrl, maxAge = SESSION_TTL) {
-    const secure = new URL(requestUrl).protocol === 'https:' ? '; Secure' : '';
-    return `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; Path=/${secure}`;
+    return authCookieHeader(SESSION_COOKIE, token, requestUrl, maxAge, 'Lax');
 }
 
 export function clearSessionCookieHeader(requestUrl) {
-    const secure = new URL(requestUrl).protocol === 'https:' ? '; Secure' : '';
-    return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/${secure}`;
+    return sessionCookieHeader('', requestUrl, 0);
 }
 
 // base64url helpers (Workers-friendly; no Node Buffers).

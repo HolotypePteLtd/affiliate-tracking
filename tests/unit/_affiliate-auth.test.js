@@ -40,7 +40,7 @@ describe('magic-link tokens', () => {
     it('round-trips a magic link token', async () => {
         const token = await createMagicLink(42, SECRET);
         const result = await verifyMagicLink(token, SECRET);
-        expect(result).toBe('42');
+        expect(result).toMatchObject({ sub: '42', version: 0, jti: expect.any(String) });
     });
 
     it('rejects a token with the wrong purpose', async () => {
@@ -87,7 +87,7 @@ describe('session tokens', () => {
     it('round-trips a session token', async () => {
         const token = await createSession(7, SECRET);
         const result = await readSession(token, SECRET);
-        expect(result).toBe('7');
+        expect(result).toMatchObject({ sub: '7', version: 0 });
     });
 
     it('rejects when used as a magic link', async () => {
@@ -100,7 +100,7 @@ describe('session tokens', () => {
 describe('cookie headers', () => {
     it('sessionCookieHeader includes required flags', () => {
         const h = sessionCookieHeader('abc123', 'https://shop.example.com');
-        expect(h).toContain('aff_session=abc123');
+        expect(h).toMatch(/^__Host-aff_session=abc123;/);
         expect(h).toContain('HttpOnly');
         expect(h).toContain('SameSite=Lax');
         expect(h).toContain('Max-Age=2592000');
@@ -108,14 +108,15 @@ describe('cookie headers', () => {
         expect(h).toContain('Path=/');
     });
 
-    it('omits Secure for http requests', () => {
+    it('uses an unprefixed cookie for HTTP loopback', () => {
         const h = sessionCookieHeader('abc123', 'http://localhost:8787');
+        expect(h).toMatch(/^aff_session=abc123;/);
         expect(h).not.toContain('Secure');
     });
 
     it('clearSessionCookieHeader sets Max-Age=0', () => {
         const h = clearSessionCookieHeader('https://shop.example.com');
-        expect(h).toContain('aff_session=');
+        expect(h).toMatch(/^__Host-aff_session=;/);
         expect(h).toContain('Max-Age=0');
         expect(h).toContain('HttpOnly');
         expect(h).toContain('Secure');

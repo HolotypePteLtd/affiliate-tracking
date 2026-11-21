@@ -17,7 +17,7 @@ async function setup(t) {
     const env = { DB, AFFILIATE_SESSION_SECRET: 'details-test-secret', ADMIN_TOKEN: 'admin-test', STRIPE_SECRET_KEY: 'not-used' };
     const session = await createSession(1, env.AFFILIATE_SESSION_SECRET);
     const context = query => ({ env, request: new Request('https://shop.example/api/affiliate/me' + query,
-        { headers: { Cookie: 'aff_session=' + session } }) });
+        { headers: { Cookie: '__Host-aff_session=' + session } }) });
     const get = async (query = '') => (await me(context(query))).json();
     return { sql, env, context, get };
 }

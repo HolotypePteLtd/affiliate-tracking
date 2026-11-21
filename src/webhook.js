@@ -3,6 +3,7 @@
 
 import { currencyCode } from './money.js';
 import { resolvePaidAttribution } from './promotion.js';
+import { stripeId, stripeRequest } from './stripe.js';
 
 export async function recordConversion(session, event, env, lineItems = session?.line_items?.data || []) {
     if (!session) return null;
@@ -50,16 +51,20 @@ export async function recordConversion(session, event, env, lineItems = session?
             quantity: item.quantity || 1,
         };
     });
-    const paymentIntent = typeof session.payment_intent === 'string'
-        ? session.payment_intent
-        : session.payment_intent?.id || null;
+    const paymentIntent = stripeId(session.payment_intent);
     await env.DB.prepare(`
         INSERT INTO conversions
           (affiliate_id, stripe_session_id, stripe_event_id, payment_intent,
            customer_email, amount_cents, commission_cents, status, created_at,
            currency, customer_country, commission_pct, items_json)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,'pending',?8,?9,?10,?11,?12)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,
+                CASE WHEN EXISTS (SELECT 1 FROM refunded_payments WHERE payment_intent=?4)
+                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12)
         ON CONFLICT(stripe_session_id) DO UPDATE SET
+          payment_intent=COALESCE(conversions.payment_intent, excluded.payment_intent),
+          status=CASE WHEN excluded.status='refunded' AND conversions.status IN ('pending','approved','paying')
+                         AND (conversions.payment_intent IS NULL OR conversions.payment_intent=excluded.payment_intent)
+                      THEN 'refunded' ELSE conversions.status END,
           currency=COALESCE(conversions.currency, excluded.currency),
           customer_country=COALESCE(conversions.customer_country, excluded.customer_country),
           items_json=CASE WHEN conversions.items_json='[]' THEN excluded.items_json ELSE conversions.items_json END
@@ -78,4 +83,24 @@ export async function recordConversion(session, event, env, lineItems = session?
         JSON.stringify(items)
     ).run();
     return session;
+}
+
+// Call after verifying the Stripe signature. Keep a marker even if Checkout
+// hasn't arrived, and preserve the history of commissions already paid.
+export async function recordRefund(event, env) {
+    if (event?.type !== 'charge.refunded' && event?.type !== 'charge.dispute.created') return 0;
+    const object = event.data?.object;
+    let paymentIntent = stripeId(object?.payment_intent ?? object?.charge?.payment_intent);
+    if (!paymentIntent && event.type === 'charge.dispute.created' && typeof object?.charge === 'string') {
+        const charge = await stripeRequest(env, `charges/${encodeURIComponent(object.charge)}`);
+        paymentIntent = stripeId(charge.payment_intent);
+    }
+    if (!paymentIntent) return 0;
+    if (!env.DB) throw new Error('Affiliate DB is not configured');
+    const [, updated] = await env.DB.batch([
+        env.DB.prepare('INSERT OR IGNORE INTO refunded_payments (payment_intent) VALUES (?1)').bind(paymentIntent),
+        env.DB.prepare(`UPDATE conversions SET status='refunded'
+            WHERE payment_intent=?1 AND status IN ('pending','approved','paying')`).bind(paymentIntent),
+    ]);
+    return updated.meta.changes;
 }

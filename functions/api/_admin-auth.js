@@ -1,7 +1,8 @@
 import { hmacHex, constantTimeCompare } from './_crypto-utils.js';
 import { readCookieValue } from './_affiliate-auth.js';
+import { authCookieHeader, hostCookieName } from '../../src/cookie.js';
 
-export const ADMIN_SESSION_COOKIE = 'aff_admin_session';
+export const ADMIN_SESSION_COOKIE = '__Host-aff_admin_session';
 const TTL = 8 * 60 * 60;
 const encoder = new TextEncoder();
 
@@ -17,7 +18,7 @@ export async function createAdminSession(secret, ttl = TTL) {
 }
 
 export async function readAdminSession(request, secret) {
-    const token = readCookieValue(request.headers.get('Cookie'), ADMIN_SESSION_COOKIE);
+    const token = readCookieValue(request.headers.get('Cookie'), hostCookieName(ADMIN_SESSION_COOKIE, request.url));
     if (!token || !secret) return false;
     const [payload, signature, extra] = token.split('.');
     if (!payload || !signature || extra !== undefined) return false;
@@ -31,8 +32,7 @@ export async function readAdminSession(request, secret) {
 }
 
 export function adminSessionCookieHeader(token, requestUrl, maxAge = TTL) {
-    const secure = new URL(requestUrl).protocol === 'https:' ? '; Secure' : '';
-    return `${ADMIN_SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}; Path=/${secure}`;
+    return authCookieHeader(ADMIN_SESSION_COOKIE, token, requestUrl, maxAge, 'Strict');
 }
 
 export function isSameOrigin(request) {

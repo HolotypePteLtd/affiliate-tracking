@@ -10,7 +10,7 @@
 //       Returns a Response for its paths, null otherwise — register it BEFORE
 //       your own route table; anything you serve first simply wins.
 //
-//   applyAffiliateRef(request, env, respond)
+//   applyAffiliateRef(request, env, respond, ctx?)
 //       Ref middleware. Pass your asset fallthrough as `respond`; returns a
 //       Response with the attribution cookie appended, or null when the URL
 //       has no ?ref= (or the code is unknown) so you fall through untouched.
@@ -26,6 +26,9 @@
 //       Verifies the applied promotion before attribution, returns the attributed
 //       session (or null), and propagates Stripe/DB failures for retries.
 //
+//   recordRefund(event, env)
+//       Await in the verified charge.refunded and charge.dispute.created branches.
+//
 //   adminDashboard(context, appearance?)
 //       Returns the shared admin UI with optional host branding and styles.
 //       Serve before handleAffiliateApi to customize the dashboard page.
@@ -38,4 +41,4 @@ export { adminDashboard } from './admin-dashboard.js';
 export { applyAffiliateRef, refCookieName, DEFAULT_REF_COOKIE } from './ref.js';
 export { attachAffiliateAttribution } from './checkout.js';
 export { PromotionCodeError } from './promotion.js';
-export { recordConversion } from './webhook.js';
+export { recordConversion, recordRefund } from './webhook.js';
