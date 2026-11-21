@@ -9,20 +9,64 @@
 //   if (refRes) return refRes;
 
 // Attribution cookie name. Neutral default; consumers brand it per site by
-// setting AFFILIATE_REF_COOKIE in their Worker env (e.g. to keep a legacy
-// cookie name). Resolved per-call since env differs per environment.
+// setting AFFILIATE_REF_COOKIE in their Worker env. Use a __Host- name on
+// HTTPS and AFFILIATE_REF_LEGACY_COOKIE for a read-only migration fallback.
+// Resolved per-call since env differs per environment.
 export const DEFAULT_REF_COOKIE = 'affiliate_ref';
 const REF_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
-export function refCookieName(env) {
-    return (env && env.AFFILIATE_REF_COOKIE) || DEFAULT_REF_COOKIE;
+export function refCookieName(env, request) {
+    const name = (env && env.AFFILIATE_REF_COOKIE) || DEFAULT_REF_COOKIE;
+    if (request && name.startsWith('__Host-')) {
+        const url = new URL(request.url);
+        // HTTP loopback development cannot rely on secure-cookie support.
+        // Production and preview keep the protected name, even on HTTP.
+        if (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+            return name.slice('__Host-'.length);
+        }
+    }
+    return name;
+}
+
+// Cookie headers contain no path/domain/creation-time information. Never use
+// their ordering to select between conflicting referrals. A present current
+// cookie takes precedence over legacy cookies, even if invalid or ambiguous.
+export function readAffiliateRef(request, env) {
+    const names = new Set([refCookieName(env, request), env?.AFFILIATE_REF_LEGACY_COOKIE]);
+    const header = request.headers.get('Cookie');
+    for (const name of names) {
+        if (!name) continue;
+        const cookie = referralCookie(header, name);
+        if (!cookie.present) continue;
+        if (cookie.values.size > 1) {
+            console.warn(JSON.stringify({ event: 'affiliate_ref_cookie_conflict', cookie_name: name }));
+        }
+        if (cookie.invalid || cookie.values.size !== 1) return null;
+        return [...cookie.values][0] || null;
+    }
+    return null;
+}
+
+function referralCookie(header, name) {
+    const cookie = { present: false, invalid: false, values: new Set() };
+    for (const part of (header || '').split(';')) {
+        const idx = part.indexOf('=');
+        if (idx === -1 || part.slice(0, idx).trim() !== name) continue;
+        cookie.present = true;
+        try {
+            cookie.values.add(decodeURIComponent(part.slice(idx + 1).trim()));
+        } catch {
+            cookie.invalid = true;
+        }
+    }
+    return cookie;
 }
 
 export async function applyAffiliateRef(request, env, respond) {
-    if (!env.DB || typeof respond !== 'function') return null;
+    if (!env.DB || typeof respond !== 'function' || request.method !== 'GET') return null;
     const code = new URL(request.url).searchParams.get('ref');
     if (!code) return null;
-    const cookieName = refCookieName(env);
+    const cookieName = refCookieName(env, request);
 
     let aff;
     try {
@@ -37,7 +81,7 @@ export async function applyAffiliateRef(request, env, respond) {
 
     // One click per fresh referral: a visitor already carrying this code (page
     // reloads, multi-page browsing) is not a second click.
-    const existing = parseCookies(request.headers.get('Cookie'))[cookieName];
+    const existing = readAffiliateRef(request, env);
     if (existing !== aff.code) {
         const ipHash = await hashIp(
             request.headers.get('cf-connecting-ip'),
@@ -61,23 +105,19 @@ export async function applyAffiliateRef(request, env, respond) {
     }
     if (!(assetRes instanceof Response)) return null;
     const headers = new Headers(assetRes.headers);
+    headers.set('Cache-Control', 'private, no-cache');
+    const secure = new URL(request.url).protocol === 'https:' || cookieName.startsWith('__Host-');
+    const attributes = `HttpOnly; SameSite=Lax; Path=/${secure ? '; Secure' : ''}`;
     headers.append('Set-Cookie',
-        `${cookieName}=${encodeURIComponent(aff.code)}; HttpOnly; SameSite=Lax; Max-Age=${REF_COOKIE_MAX_AGE}; Path=/`
+        `${cookieName}=${encodeURIComponent(aff.code)}; Max-Age=${REF_COOKIE_MAX_AGE}; ${attributes}`
     );
-    return new Response(assetRes.body, { status: assetRes.status, headers });
-}
-
-export function parseCookies(header) {
-    const out = {};
-    if (!header) return out;
-    for (const part of header.split(';')) {
-        const idx = part.indexOf('=');
-        if (idx === -1) continue;
-        const k = part.slice(0, idx).trim();
-        const v = part.slice(idx + 1).trim();
-        if (k) out[k] = v;
+    // Retire the known host-only, root-path legacy cookie on a fresh referral.
+    // Other legacy scopes are unknown; the current cookie always outranks them.
+    const legacyName = env.AFFILIATE_REF_LEGACY_COOKIE;
+    if (legacyName && legacyName !== cookieName) {
+        headers.append('Set-Cookie', `${legacyName}=; Max-Age=0; ${attributes}`);
     }
-    return out;
+    return new Response(assetRes.body, { status: assetRes.status, headers });
 }
 
 async function hashIp(ip, salt) {

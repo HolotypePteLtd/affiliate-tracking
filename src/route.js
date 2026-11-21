@@ -8,18 +8,32 @@
 import { onRequestPost as affLoginPost, onRequestGet as affLoginGet } from '../functions/api/affiliate/login.js';
 import { onRequestPost as applyPost } from '../functions/api/affiliate/apply.js';
 import { onRequestGet as affMeGet } from '../functions/api/affiliate/me.js';
+import { onRequestGet as affExportGet } from '../functions/api/affiliate/export.js';
 import { onRequestPost as affLogoutPost } from '../functions/api/affiliate/logout.js';
 import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from '../functions/api/admin/affiliates.js';
 import { onRequestPost as adminAffiliateApprove } from '../functions/api/admin/affiliate-approve.js';
 import { onRequestGet as adminConversionsGet } from '../functions/api/admin/conversions.js';
 import { onRequestPost as adminConversionApprove } from '../functions/api/admin/conversion-approve.js';
 import { onRequestPost as adminPayoutsRun } from '../functions/api/admin/payouts-run.js';
+import { onRequestGet as adminPayoutsGet } from '../functions/api/admin/payouts.js';
+import { onRequestPost as adminLogin } from '../functions/api/admin/login.js';
+import { onRequestPost as adminLogout } from '../functions/api/admin/logout.js';
+import { devInfo, devLogin, devAdminLogin } from './dev.js';
+import { adminDashboard } from './admin-dashboard.js';
 
 export const affiliateRoutes = [
+    ['GET', '/admin/affiliates', adminDashboard],
+    ['GET', '/admin/affiliates/', adminDashboard],
+    ['GET', '/api/affiliate/dev', devInfo],
+    ['POST', '/api/affiliate/dev-login', devLogin],
+    ['POST', '/api/admin/dev-login', devAdminLogin],
+    ['POST', '/api/admin/login', adminLogin],
+    ['POST', '/api/admin/logout', adminLogout],
     ['POST', '/api/affiliate/login', affLoginPost],
     ['GET', '/api/affiliate/login', affLoginGet],
     ['POST', '/api/affiliate/apply', applyPost],
     ['GET', '/api/affiliate/me', affMeGet],
+    ['GET', '/api/affiliate/export', affExportGet],
     ['POST', '/api/affiliate/logout', affLogoutPost],
     ['GET', '/api/admin/affiliates', adminAffiliatesGet],
     ['POST', '/api/admin/affiliates', adminAffiliatesPost],
@@ -27,13 +41,20 @@ export const affiliateRoutes = [
     ['GET', '/api/admin/conversions', adminConversionsGet],
     ['POST', '/api/admin/conversion-approve', adminConversionApprove],
     ['POST', '/api/admin/payouts-run', adminPayoutsRun],
+    ['GET', '/api/admin/payouts', adminPayoutsGet],
 ];
 
 export async function handleAffiliateApi(request, env, ctx) {
+    const pathname = new URL(request.url).pathname;
     for (const [method, path, handler] of affiliateRoutes) {
-        if (method === request.method && path === new URL(request.url).pathname) {
+        if (method === request.method && path === pathname) {
             // Handlers are Pages-Functions style; keep the same context shape.
-            return handler({ request, env, ctx, params: {} });
+            const response = await handler({ request, env, ctx, params: {} });
+            // Authentication and dashboard data must not be cached by a browser
+            // or an intermediary, including error responses.
+            const headers = new Headers(response.headers);
+            headers.set('Cache-Control', 'no-store');
+            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
         }
     }
     return null;

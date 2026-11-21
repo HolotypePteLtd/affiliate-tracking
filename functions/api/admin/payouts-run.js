@@ -5,23 +5,36 @@
 // Affiliates without Connect retain the manual bookkeeping payout behavior.
 
 import { requireAdmin } from './_gate.js';
+import { readJsonObject } from '../_public.js';
+import { isLocalAffiliateDev } from '../../../src/dev.js';
 
 // Stripe can prune idempotency records after 24 hours. Stop automatic retries
 // earlier so an old, ambiguous transfer cannot accidentally be sent twice.
 const TRANSFER_RETRY_WINDOW = 23 * 60 * 60 * 1000;
 
 export async function onRequestPost(context) {
-    const gate = requireAdmin(context.env, context.request);
+    const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 
     const env = context.env;
+    if (isLocalAffiliateDev(context.request, env)) {
+        return Response.json({ ok: false, error: 'Payments are disabled in local demo mode' }, { status: 409 });
+    }
     const db = env.DB;
     if (!db) return Response.json({ ok: false, error: 'DB not bound' }, { status: 500 });
     if (!env.STRIPE_SECRET_KEY) {
         return Response.json({ ok: false, error: 'STRIPE_SECRET_KEY not configured' }, { status: 500 });
     }
 
-    const { affiliateId } = await context.request.json().catch(() => ({}));
+    const { affiliateId } = await readJsonObject(context.request);
+    // This payout runner sends USD. Preserve that established behavior while
+    // preventing newly recorded foreign/unknown amounts from being paid as USD.
+    const unsupported = await db.prepare(`SELECT id FROM conversions
+        WHERE status='approved' AND payout_id IS NULL AND (?1 IS NULL OR affiliate_id=?1)
+          AND (currency IS NULL OR currency!='usd') LIMIT 1`).bind(affiliateId || null).first();
+    if (unsupported) {
+        return Response.json({ ok: false, error: 'Non-USD or unknown-currency commissions require reconciliation before USD payouts' }, { status: 409 });
+    }
     const affiliates = (await db.prepare(`
         SELECT a.id FROM affiliates a
         WHERE (?1 IS NULL OR a.id=?1) AND (
@@ -44,6 +57,10 @@ export async function onRequestPost(context) {
 
         if (!batch.batch_key) {
             error = 'Legacy pending payout requires manual reconciliation before another payout';
+        } else if (batch.currency && batch.currency !== 'usd') {
+            error = 'Non-USD pending payout requires manual reconciliation';
+        } else if (!Number.isFinite(batch.amount_cents) || batch.amount_cents <= 0) {
+            error = 'Pending payout has non-positive amount and requires manual reconciliation';
         } else if (!batch.stripe_account_id) {
             status = 'manual';
         } else {
@@ -74,6 +91,7 @@ export async function onRequestPost(context) {
                             'metadata[payout_id]': String(batch.id),
                             transfer_group: `affiliate_payout_${batch.affiliate_id}`,
                         }),
+                        signal: AbortSignal.timeout(10000),
                     });
                     const data = await response.json();
                     if (response.ok && data.id?.startsWith('tr_')) {
@@ -92,9 +110,9 @@ export async function onRequestPost(context) {
             // Atomic finalization also makes overlapping retries harmless.
             await db.batch([
                 db.prepare(`
-                    UPDATE payouts SET status=?1, stripe_transfer_id=?2
+                    UPDATE payouts SET status=?1, stripe_transfer_id=?2, paid_at=COALESCE(paid_at,?4)
                     WHERE id=?3 AND status='pending'
-                `).bind(status, stripeTransferId, batch.id),
+                `).bind(status, stripeTransferId, batch.id, Date.now()),
                 db.prepare(`
                     UPDATE conversions SET status='paid', paid_at=?1
                     WHERE payout_id=?2 AND status='paying'
@@ -129,11 +147,11 @@ async function claimBatch(db, affiliateId) {
             WHERE id=?3
               AND NOT EXISTS (SELECT 1 FROM payouts WHERE affiliate_id=?3 AND status='pending')
               AND (SELECT COALESCE(SUM(commission_cents),0) FROM conversions
-                   WHERE affiliate_id=?3 AND status='approved' AND payout_id IS NULL) > 0
+                   WHERE affiliate_id=?3 AND status='approved' AND payout_id IS NULL AND currency='usd') > 0
         `).bind(Date.now(), batchKey, affiliateId),
         db.prepare(`
             UPDATE conversions SET status='paying', payout_id=(SELECT id FROM payouts WHERE batch_key=?1)
-            WHERE affiliate_id=?2 AND status='approved' AND payout_id IS NULL
+            WHERE affiliate_id=?2 AND status='approved' AND payout_id IS NULL AND currency='usd'
               AND EXISTS (SELECT 1 FROM payouts WHERE batch_key=?1)
         `).bind(batchKey, affiliateId),
         db.prepare(`

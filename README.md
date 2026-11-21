@@ -23,7 +23,7 @@ affiliate link ?ref=nick  →  Worker reads ?ref=, validates in D1,
 buyer clicks Buy          →  checkout handler reads the cookie,
                               attaches affiliate metadata + buyer discount
                               to the Stripe Checkout Session
-Stripe webhook fires      →  reads session.metadata.affiliate_id,
+Stripe webhook fires      →  verifies applied promotions before cookie attribution,
                               inserts an idempotent conversion row
 ```
 
@@ -38,8 +38,12 @@ No client-side snippet. No third party. One D1 database, one `AFFILIATE_SESSION_
 pnpm wrangler d1 create cf-affiliate
 # → paste the returned database_id into wrangler.toml
 
-# 2. Apply the schema
-pnpm wrangler d1 execute DB --file=migrations/0001_affiliates.sql --remote
+# 2. Apply the schema migrations
+pnpm wrangler d1 migrations apply DB --remote
+# Or individually:
+# pnpm wrangler d1 execute DB --file=migrations/0001_affiliates.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -113,28 +117,82 @@ a session, after the params are built and before the fetch:
 ```js
 import { attachAffiliateAttribution } from "cf-affiliate";
 
-await attachAffiliateAttribution(params, request, env);
+await attachAffiliateAttribution(params, request, env, { promoCode: body.promo_code });
 ```
 
 Appends `client_reference_id` (only if you haven't set it yourself),
 `metadata[affiliate_id]`, `metadata[affiliate_code]`, and — once the affiliate
 has been approved — `discounts[0][promotion_code]` for the buyer discount.
-No-op when there's no cookie, no DB binding, or no active affiliate.
+With no entered code, no-op when there is no cookie, no DB binding, or no active affiliate.
+
+The optional `promoCode` is the buyer-entered code, not a Stripe object ID.
+Lookup uses this environment's Stripe key and is case-insensitive. An entered
+code replaces the automatic cookie discount; discounts do not stack. Return a
+recoverable checkout error for `PromotionCodeError` (`status` and `code`) and
+Stripe redemption errors; do not silently discard a rejected entered code.
+Stripe promotion metadata is not used to establish affiliate ownership.
 
 ### 4 · Conversion recording (`recordConversion`)
 
-In your Stripe webhook handler, once `payment_status` is `'paid'`:
+In your signed Stripe webhook handler, once payment is confirmed:
 
 ```js
 import { recordConversion } from "cf-affiliate";
 
-ctx.waitUntil(recordConversion(session, event, env));
+// Call for every paid session, even without affiliate metadata.
+// Await before acknowledging so Stripe can retry verification/DB failures.
+const attributedSession = await recordConversion(session, event, env);
 ```
 
-Idempotent (`UNIQUE(stripe_session_id)` + `ON CONFLICT DO NOTHING`) and
-best-effort — a failed insert logs, it never fails your webhook.
+Verifies the final applied Stripe promotion before inserting a commission.
+An active affiliate's stored promotion ID overrides any referral cookie,
+including absent/conflicting cookies. General store codes leave cookie
+attribution unchanged. Removed/unapplied codes do not retain provisional
+attribution; only the valid cookie captured at checkout can be the fallback.
+When a new checkout's event omits discounts, the helper retrieves its final
+session using `STRIPE_SECRET_KEY`. Errors propagate: return non-2xx for a retry.
+
+Returns the attributed session, or null for an unattributed order. Pass that
+session and optional purchased line items as the fourth argument to enrich the
+record before email acknowledgement. Recording is idempotent by checkout
+session ID; retries preserve original affiliate, money, and financial status.
+No new database migration is needed for promotion precedence.
 
 ---
+
+## Referral cookies and attribution
+
+A successfully applied affiliate promo code takes priority over referral
+cookies. Otherwise the last valid affiliate-link visit wins within a 30-day
+cookie window. The host owns code-entry UI and must publish these rules in its
+program terms.
+Every valid referral-link visit refreshes the window; ordinary visits and
+checkout do not. For HTTPS hosts, configure a protected cookie name:
+
+```toml
+[vars]
+AFFILIATE_REF_COOKIE = "__Host-affiliate_ref"
+AFFILIATE_REF_LEGACY_COOKIE = "affiliate_ref"
+```
+
+Referral responses use Secure, HttpOnly, SameSite=Lax, Path=/, and no
+Domain. HTTP loopback development (localhost, 127.0.0.1, or [::1]) strips
+the __Host- prefix automatically. The neutral default stays affiliate_ref
+for existing hosts that have not changed their configuration.
+
+The optional AFFILIATE_REF_LEGACY_COOKIE is a read-only migration fallback
+used only when the current cookie is absent. Repeated cookies are decoded
+and accepted only when their referral codes agree. Conflicts emit an
+affiliate_ref_cookie_conflict warning containing only the cookie name,
+and skip cookie attribution and the automatic affiliate discount while
+checkout proceeds. Invalid, empty, conflicting, unknown or inactive
+current referrals never fall back to an older legacy referral.
+
+A fresh valid referral link sets the current cookie and expires the known
+host-only root-path legacy cookie. Unknown legacy paths/domains cannot all
+be cleared, but a present current cookie outranks them. Checkout never
+rewrites a legacy cookie or extends its expiry. Remove the legacy setting
+after the migration window when appropriate.
 
 ## Affiliate lifecycle
 
@@ -257,3 +315,95 @@ against an in-memory SQLite database with mocked Stripe and email requests.
 ## License
 
 MIT
+
+## Affiliate dashboard queries
+
+Apply migration `0003_dashboard_details.sql` before deploying the new handlers.
+`GET /api/affiliate/me` accepts `page` (default 1), `per_page` (default 100,
+maximum 100), `start_date` / `end_date` (`YYYY-MM-DD`, inclusive UTC dates),
+`product` (Stripe product ID), and `status` (`pending`, `approved`, `paying`,
+`paid`, `refunded`). Product filters match any item in an order. Conversion
+`pagination` contains `page`, `per_page`, `total`, and `total_pages`; pages past
+the end resolve to the last page. Invalid query values return HTTP 400.
+`payout_page` / `payout_per_page` (default 1 / 25, maximum 100) independently
+page the affiliate's payout history, returned in `payouts` and
+`payouts_pagination`. Customer email/address and Stripe payment/transfer IDs
+are excluded from affiliate responses. Existing clicks and commission totals
+remain lifetime values; clients should avoid combining different currencies.
+
+Purchase details are snapshots: product, variant, quantity, currency, billing
+country, and commission rate. Pass the full purchased line-item list as the
+optional fourth argument: `recordConversion(session, event, env, lineItems)`.
+Session-expanded line items are used by default. Webhook retries can enrich
+missing product/country/currency details without changing money, recorded
+commission rate, dates, or financial status. Historical details not recorded
+remain unknown; do not infer currency or country from storefront language.
+Money includes `currency_decimals` for Stripe's minor-unit representation.
+
+`GET /api/affiliate/export` exports all matching conversions using the same
+product/status/date filters. The CSV streams in bounded batches, uses safe
+order/payout references, excludes customer identities, and escapes spreadsheet
+formula prefixes. Both reporting endpoints require an active affiliate session.
+Payout transfers remain USD-only; newly claimed foreign/unknown-currency
+commissions return HTTP 409 for reconciliation instead of being paid as USD.
+
+## Admin dashboard and local demo
+
+The router serves a dependency-free admin dashboard at `/admin/affiliates/`.
+Sign in with `ADMIN_TOKEN`; the browser receives an eight-hour signed HttpOnly,
+SameSite=Strict session cookie. The token is never stored in browser storage.
+Cookie-authenticated mutations require the same Origin. CLI `x-admin-token`
+authentication still works. Admin endpoints deny access when the token is absent.
+The dashboard includes partner creation/application approval, conversion review,
+and payout history with confirmed payout actions. `AFFILIATE_PUBLIC_LIMITER`
+(as in `wrangler.toml`) is required for rate-limited token sign-in.
+
+For host branding, import `adminDashboard` from the public API and call
+`adminDashboard(context, { brandName, title, logoUrl, stylesheets, fontOrigins })`
+before the generic route. The UI and session logic stay shared; your Worker
+supplies a same-origin logo and stylesheet URLs. External stylesheet and font
+origins are allowed by the page's CSP, while scripts still require its nonce.
+Without appearance options, the standalone dashboard keeps its default style.
+
+For a consumer Worker running locally, add `ADMIN_TOKEN` and
+`AFFILIATE_SESSION_SECRET` (each generated with `openssl rand -hex 32`) and
+`AFFILIATE_DEV_MODE=true` to its gitignored `.dev.vars`. Apply the schema locally
+and execute this package's `examples/local-demo.sql` with `--local`.
+If your schema was already initialized, do not reapply the initial CREATE TABLE
+statements. Local seeding is idempotent and preserves changes to demo records.
+
+```bash
+pnpm wrangler d1 migrations apply DB --local
+pnpm wrangler d1 execute DB --local --file examples/local-demo.sql
+pnpm wrangler dev
+```
+
+The demo has an active `demo@example.test` / `local-demo` affiliate, an applicant,
+clicks, commissions, and a sample payout. The admin page includes demo sign-in
+buttons. A consumer's affiliate portal can show its own demo button after
+`GET /api/affiliate/dev` returns `{enabled:true}`; POST to
+`/api/affiliate/dev-login` then navigate to `/affiliates/dashboard/`.
+No email or Stripe keys are needed for these sign-ins. Demo partner creation
+and approval skip external integrations, and payments are blocked.
+
+Demo routes require the explicit flag and a loopback hostname; both POST routes
+also require the same Origin. Never enable the flag in remote configuration.
+Remove it to test normal integrations locally. The local bootstrap command
+and branded affiliate page remain the consumer's responsibility.
+
+## Terms acceptance
+
+The host owns its program terms and signup page. After applying
+`migrations/0004_affiliate_terms.sql`, set `AFFILIATE_TERMS_VERSION` to the
+published version in each environment. New self-serve applications must submit
+`accepted_terms: true` and a matching `terms_version`. Missing or stale
+acceptance returns HTTP 400 with the current version. The new affiliate row
+records `terms_version` and a server-generated `terms_accepted_at`.
+
+Existing/admin-created accounts retain NULL acceptance; migration does not
+manufacture consent. Duplicate applications never overwrite acceptance or
+enrol an existing account into a newer policy. Without the setting, the public
+application API stays compatible with existing hosts. Keep published policy
+text, signup metadata and environment versions in sync, and retain old policy
+text when changing versions. This does not automatically obtain acceptance
+from existing or admin-invited affiliates.

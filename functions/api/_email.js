@@ -55,6 +55,7 @@ export async function sendEmail(apiKey, params, env = {}) {
             'Accept': 'application/json',
         },
         body: JSON.stringify({ ...params, sender: params.sender || emailSender(env) }),
+        signal: AbortSignal.timeout(10000),
     });
 }
 

@@ -21,9 +21,24 @@ export function parseCookies(header) {
         if (idx === -1) continue;
         const k = part.slice(0, idx).trim();
         const v = part.slice(idx + 1).trim();
-        if (k) out[k] = v;
+        if (k && k !== '__proto__' && k !== 'constructor' && k !== 'prototype') out[k] = v;
     }
     return out;
+}
+
+// Read a single cookie value, returning null if absent or if conflicting
+// duplicate cookies with the same name are present (cookie-tossing defense).
+export function readCookieValue(header, name) {
+    if (!header) return null;
+    const values = new Set();
+    for (const part of header.split(';')) {
+        const idx = part.indexOf('=');
+        if (idx === -1) continue;
+        if (part.slice(0, idx).trim() !== name) continue;
+        values.add(part.slice(idx + 1).trim());
+    }
+    if (values.size !== 1) return null;
+    return [...values][0] || null;
 }
 
 // Sign a claims object: base64url(JSON(claims with exp)) "." hex(HMAC).

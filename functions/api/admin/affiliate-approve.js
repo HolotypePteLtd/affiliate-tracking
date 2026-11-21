@@ -15,19 +15,21 @@
 //     creation can be retried later.
 
 import { requireAdmin } from './_gate.js';
-import { sendEmail } from '../_email.js';
+import { sendEmail, escapeHtml } from '../_email.js';
+import { readJsonObject } from '../_public.js';
+import { isLocalAffiliateDev } from '../../../src/dev.js';
 
 const DEFAULT_COUPON = 'affiliate-10';
 
 export async function onRequestPost(context) {
-    const gate = requireAdmin(context.env, context.request);
+    const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 
     const env = context.env;
     const db = env.DB;
     if (!db) return Response.json({ ok: false, error: 'DB not bound' }, { status: 500 });
 
-    const { id, coupon } = await context.request.json().catch(() => ({}));
+    const { id, coupon } = await readJsonObject(context.request);
     if (!id) {
         return Response.json({ ok: false, error: 'Affiliate id is required' }, { status: 400 });
     }
@@ -35,10 +37,18 @@ export async function onRequestPost(context) {
     // Look up the affiliate (must be pending — also allows re-running for
     // approved affiliates that don't have a connect account yet).
     const aff = await db.prepare(
-        "SELECT id, code, email, name, commission_pct, promo_code_id FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
+        "SELECT id, code, email, name, status, commission_pct, promo_code_id, source FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
     ).bind(id).first();
     if (!aff) {
         return Response.json({ ok: false, error: 'Affiliate not found or already fully approved' }, { status: 404 });
+    }
+
+    if (isLocalAffiliateDev(context.request, env)) {
+        if (aff.source !== 'local-demo') {
+            return Response.json({ ok: false, error: 'Local demo mode can only approve demo partners' }, { status: 409 });
+        }
+        await db.prepare("UPDATE affiliates SET status='active' WHERE id=?1").bind(aff.id).run();
+        return Response.json({ ok: true, affiliate_id: aff.id, demo: true });
     }
 
     const stripeKey = env.STRIPE_SECRET_KEY;
@@ -57,12 +67,14 @@ export async function onRequestPost(context) {
             headers: {
                 'Authorization': `Bearer ${stripeKey}`,
                 'Content-Type': 'application/x-www-form-urlencoded',
+                'Idempotency-Key': `aff_promo_${aff.id}_${couponName}`,
             },
             body: new URLSearchParams({
                 coupon: couponName,
                 code: promoCode,
                 'metadata[affiliate_id]': String(aff.id),
             }),
+            signal: AbortSignal.timeout(10000),
         });
         promoData = await promoResp.json();
         if (!promoResp.ok || promoData.error) {
@@ -89,6 +101,7 @@ export async function onRequestPost(context) {
             headers: {
                 'Authorization': `Bearer ${stripeKey}`,
                 'Content-Type': 'application/x-www-form-urlencoded',
+                'Idempotency-Key': `aff_connect_${aff.id}`,
             },
             body: new URLSearchParams({
                 type: 'express',
@@ -97,6 +110,7 @@ export async function onRequestPost(context) {
                 'capabilities[transfers][requested]': 'true',
                 'metadata[affiliate_id]': String(aff.id),
             }),
+            signal: AbortSignal.timeout(10000),
         });
         const acctData = await acctResp.json();
         if (acctResp.ok && acctData.id && acctData.id.startsWith('acct_')) {
@@ -119,6 +133,7 @@ export async function onRequestPost(context) {
                     return_url: `${origin}/affiliates/dashboard/`,
                     type: 'account_onboarding',
                 }),
+                signal: AbortSignal.timeout(10000),
             });
             const linkData = await linkResp.json();
             if (linkResp.ok && linkData.url) {
@@ -141,15 +156,15 @@ export async function onRequestPost(context) {
         : [promoData.id, aff.id]
     )).run();
 
-    // --- Acceptance email (best-effort) ---
+    // --- Acceptance email (best-effort, only on initial approval) ---
     // Sent after the row is active so the dashboard link works immediately.
     // Failure logs but doesn't fail the approval: the affiliate is already
     // active and the admin can resend by pointing them at /affiliates/.
     const origin = new URL(context.request.url).origin;
-    if (env.BREVO_API_KEY) {
+    if (aff.status === 'pending' && env.BREVO_API_KEY) {
         try {
             const loginUrl = `${origin}/affiliates/`;
-            await sendEmail(env.BREVO_API_KEY, {
+            const mailRes = await sendEmail(env.BREVO_API_KEY, {
                 to: [{ email: aff.email }],
                 subject: 'You\'re in — your affiliate program access',
                 htmlContent: `
@@ -162,6 +177,7 @@ export async function onRequestPost(context) {
                     <p>Sign-in is passwordless — enter your email and we'll send you a one-time link.</p>
                 `,
             }, env);
+            if (!mailRes.ok) console.error('Affiliate acceptance email failed:', mailRes.status);
         } catch (err) {
             console.error('Affiliate acceptance email failed:', err.message);
         }
@@ -182,10 +198,4 @@ export async function onRequestPost(context) {
                 connect_note: 'Stripe Connect account could not be created. The affiliate is still active and can receive manual payouts. Check that Stripe Connect is enabled and retry via POST /api/admin/affiliate-approve.',
               }),
     });
-}
-
-function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-    ));
 }

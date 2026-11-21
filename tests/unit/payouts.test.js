@@ -5,14 +5,14 @@ import { onRequestPost as approveConversion } from '../../functions/api/admin/co
 
 let sql, env, fetchMock;
 function conversion(id, commission = 2000, status = 'approved') {
-    sql.prepare(`INSERT INTO conversions (id,affiliate_id,stripe_session_id,amount_cents,commission_cents,status,created_at)
-        VALUES (?,1,?,10000,?,?,0)`).run(id, `cs_${id}`, commission, status);
+    sql.prepare(`INSERT INTO conversions (id,affiliate_id,stripe_session_id,amount_cents,commission_cents,status,created_at,currency)
+        VALUES (?,1,?,10000,?,?,0,'usd')`).run(id, `cs_${id}`, commission, status);
 }
 const run = (body = {}) => payout(context(env, '/api/admin/payouts-run', body));
 beforeEach(() => {
     const db = database();
     sql = db.sql;
-    env = { DB: db.DB, STRIPE_SECRET_KEY: 'test-key' };
+    env = { ADMIN_TOKEN: 'test-admin-token', DB: db.DB, STRIPE_SECRET_KEY: 'test-key' };
     sql.exec("INSERT INTO affiliates (id,email,code,status,stripe_account_id,created_at) VALUES (1,'sam@example.com','sam','active','acct_sam',0)");
     conversion(1);
     fetchMock = vi.fn(async () => Response.json({ id: 'tr_test' }));

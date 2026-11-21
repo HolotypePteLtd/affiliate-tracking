@@ -1,10 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 // Execute the handlers' actual SQL, including transactional D1 batches.
 export function database() {
     const sql = new DatabaseSync(':memory:');
-    sql.exec(readFileSync(new URL('../../migrations/0001_affiliates.sql', import.meta.url), 'utf8'));
+    const migrations = new URL('../../migrations/', import.meta.url);
+    for (const name of readdirSync(migrations).filter(name => name.endsWith('.sql')).sort()) {
+        sql.exec(readFileSync(new URL(name, migrations), 'utf8'));
+    }
     const DB = {
         prepare(query) {
             const stmt = sql.prepare(query);
@@ -40,6 +43,6 @@ export function database() {
 
 export function context(env, path, body) {
     return { env, request: new Request(`https://shop.example${path}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(env.ADMIN_TOKEN ? { 'x-admin-token': env.ADMIN_TOKEN } : {}) }, body: JSON.stringify(body),
     }) };
 }

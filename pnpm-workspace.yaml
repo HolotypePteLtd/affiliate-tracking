@@ -1,0 +1,4 @@
+# Keep PostCSS's transitive dependencies above their security fix versions.
+overrides:
+  'nanoid@<3.3.18': '^3.3.18'
+  'source-map-js@<1.2.2': '^1.2.2'

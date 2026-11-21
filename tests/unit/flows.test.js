@@ -8,7 +8,13 @@ let sql, env, fetchMock;
 beforeEach(() => {
     const db = database();
     sql = db.sql;
-    env = { DB: db.DB, STRIPE_SECRET_KEY: 'test-key', BREVO_API_KEY: 'test-email-key' };
+    env = {
+        ADMIN_TOKEN: 'test-admin-token',
+        DB: db.DB,
+        STRIPE_SECRET_KEY: 'test-key',
+        BREVO_API_KEY: 'test-email-key',
+        AFFILIATE_PUBLIC_LIMITER: { limit: async () => ({ success: true }) },
+    };
     fetchMock = vi.fn(async () => Response.json({}));
     vi.stubGlobal('fetch', fetchMock);
     vi.spyOn(console, 'error').mockImplementation(() => {});
