@@ -2,13 +2,15 @@
 //
 // Public helpers connect the library to an existing Worker (see README):
 //
-//   handleAffiliateApi(request, env, ctx)
+//   handleAffiliateApi(request, env, ctx, { auth }?)
 //       Serves every /api/affiliate/* and /api/admin/{affiliates,
 //       affiliate-approve,conversions,conversion-approve,payouts-run} route.
 //       Also serves /admin/affiliates/, admin login/logout and payout history,
 //       plus explicitly enabled localhost demo sign-in routes.
 //       Returns a Response for its paths, null otherwise — register it BEFORE
 //       your own route table; anything you serve first simply wins.
+//       Optional auth: { affiliate(request, env), admin(request, env) } signs
+//       partners and admins in with your own auth (e.g. Better Auth).
 //
 //   applyAffiliateRef(request, env, respond, ctx?)
 //       Ref middleware. Pass your asset fallthrough as `respond`; returns a

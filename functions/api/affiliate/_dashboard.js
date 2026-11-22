@@ -1,7 +1,24 @@
 import { affiliateSessionToken, readSession } from '../_affiliate-auth.js';
+import { authFor, affiliateForIdentity } from '../../../src/auth.js';
 import { currencyCode, currencyDecimals } from '../../../src/money.js';
 
 export async function signedInAffiliate(request, env) {
+    // The host's own auth (handleAffiliateApi options.auth.affiliate), when given.
+    const affiliateHook = authFor(request)?.affiliate;
+    if (affiliateHook && env.DB) {
+        let identity;
+        try {
+            identity = await affiliateHook(request, env);
+        } catch (err) {
+            console.error('Affiliate auth hook failed:', err.message);
+            return Response.json({ error: 'Affiliate sign-in is unavailable' }, { status: 503 });
+        }
+        if (identity) {
+            const affiliate = await affiliateForIdentity(env, identity);
+            if (affiliate) return affiliate;
+        }
+        if (!env.AFFILIATE_SESSION_SECRET) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    }
     if (!env.DB || !env.AFFILIATE_SESSION_SECRET) {
         return Response.json({ error: 'Affiliate login is not configured' }, { status: 503 });
     }

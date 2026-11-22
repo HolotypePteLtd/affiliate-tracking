@@ -3,8 +3,25 @@
 
 import { constantTimeCompare } from '../_crypto-utils.js';
 import { readAdminSession, isSameOrigin } from '../_admin-auth.js';
+import { authFor } from '../../../src/auth.js';
 
 export async function requireAdmin(env, request) {
+    // The host's own auth (handleAffiliateApi options.auth.admin), when given.
+    const adminHook = authFor(request)?.admin;
+    if (adminHook && !request.headers.get('x-admin-token')) {
+        let allowed;
+        try {
+            allowed = await adminHook(request, env);
+        } catch (err) {
+            console.error('Admin auth hook failed:', err.message);
+            return Response.json({ ok: false, error: 'Admin sign-in is unavailable' }, { status: 503 });
+        }
+        if (allowed === true) {
+            if (['GET', 'HEAD'].includes(request.method) || isSameOrigin(request)) return null;
+            return Response.json({ ok: false, error: 'Cross-origin admin request denied' }, { status: 403 });
+        }
+        if (!env.ADMIN_TOKEN) return Response.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    }
     if (!env.ADMIN_TOKEN) {
         return Response.json({ ok: false, error: 'Admin access is not configured' }, { status: 503 });
     }

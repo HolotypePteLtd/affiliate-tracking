@@ -56,8 +56,22 @@ export type AffiliateRoute = [
 ];
 
 export const affiliateRoutes: AffiliateRoute[];
+export interface AffiliateIdentity {
+    /** Your auth's user id. */
+    userId: string;
+    /** Verified email, used to match the affiliate on their first sign-in. */
+    email?: string | null;
+}
+
+export interface AffiliateAuth {
+    /** The signed-in user, or null. */
+    affiliate?: (request: Request, env: AffiliateEnv) => AffiliateIdentity | null | Promise<AffiliateIdentity | null>;
+    /** Whether the signed-in user may use the admin API and dashboard. */
+    admin?: (request: Request, env: AffiliateEnv) => boolean | Promise<boolean>;
+}
+
 export function handleAffiliateApi(
-    request: Request, env: AffiliateEnv, ctx?: AffiliateExecutionContext,
+    request: Request, env: AffiliateEnv, ctx?: AffiliateExecutionContext, options?: { auth?: AffiliateAuth },
 ): Promise<Response | null>;
 
 export interface AdminDashboardAppearance {

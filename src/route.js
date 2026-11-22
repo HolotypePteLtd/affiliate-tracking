@@ -24,6 +24,7 @@ import { onRequestPost as adminLogin } from '../functions/api/admin/login.js';
 import { onRequestPost as adminLogout } from '../functions/api/admin/logout.js';
 import { devInfo, devLogin, devAdminLogin } from './dev.js';
 import { adminDashboard } from './admin-dashboard.js';
+import { bindAuth, validateAuth } from './auth.js';
 
 export const affiliateRoutes = [
     ['GET', '/admin/affiliates', adminDashboard],
@@ -52,7 +53,8 @@ export const affiliateRoutes = [
     ['GET', '/api/admin/payouts', adminPayoutsGet],
 ];
 
-export async function handleAffiliateApi(request, env, ctx) {
+export async function handleAffiliateApi(request, env, ctx, { auth } = {}) {
+    bindAuth(request, validateAuth(auth));
     const pathname = new URL(request.url).pathname;
     for (const [method, path, handler] of affiliateRoutes) {
         if (method === request.method && path === pathname) {

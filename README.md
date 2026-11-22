@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0013_affiliate_user.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -275,6 +276,35 @@ payout run claims the remaining approved commissions under a fresh key.
 For a verified legacy transfer without attached conversions, pass the
 original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
 
+### Using your own sign-in (Better Auth and others)
+
+If your site already signs people in, pass that to `handleAffiliateApi`
+instead of making partners use magic links and admins share `ADMIN_TOKEN`:
+
+```js
+const session = request => auth.api.getSession({ headers: request.headers }); // Better Auth
+
+const affRes = await handleAffiliateApi(request, env, ctx, { auth: {
+    // Who is signed in. Return the email only once it is verified.
+    affiliate: async request => {
+        const s = await session(request);
+        return s ? { userId: s.user.id, email: s.user.emailVerified ? s.user.email : null } : null;
+    },
+    // Who may use the admin API and dashboard.
+    admin: async request => (await session(request))?.user.role === "admin",
+} });
+```
+
+- A partner is matched by user id; on their first sign-in, by email
+  (case-insensitive), which then stores the user id on the affiliate
+  (`affiliates.user_id`). After that a changed email doesn't matter.
+- Admin requests other than GET must come from your own origin, as with the
+  built-in admin session.
+- The built-in methods keep working alongside: magic-link sessions for
+  partners, and the `x-admin-token` header for scripts. Without `auth`
+  nothing changes.
+- If a hook throws, the request gets 503 and the error is only logged.
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -308,6 +338,7 @@ context to the helpers directly.
 |---|---|
 | `src/index.js` | Public API — the four exports |
 | `src/route.js` | Route table + `handleAffiliateApi` |
+| `src/auth.js` | Pluggable sign-in for partners and admins |
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
 | `src/webhook.js` | Conversion, refund, and dispute recording |
