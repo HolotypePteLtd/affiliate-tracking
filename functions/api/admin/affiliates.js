@@ -24,7 +24,7 @@ export async function onRequestGet(context) {
 
     const rows = await db.prepare(`
         SELECT a.id, a.email, a.name, a.code, a.status, a.commission_pct, a.created_at,
-               a.source, a.message, a.applied_at, a.status_change_target,
+               a.source, a.message, a.applied_at, a.status_change_target, a.review_required,
                COALESCE(c.clicks, 0) as clicks,
                COALESCE(cnv.pending, 0) as pending_conversions,
                COALESCE(cnv.approved, 0) as approved_conversions,

@@ -104,7 +104,7 @@ __STYLESHEETS__
     const partners = state.affiliates.filter(a => !$('partner-filter').value || a.status === $('partner-filter').value);
     $('affiliate-rows').replaceChildren(); $('affiliates-empty').hidden = partners.length > 0;
     partners.forEach(a => {
-      const row = document.createElement('tr'); cell(row, a.name || a.email, a.email); badge(row, a.status); cell(row, a.code); cell(row, a.commission_pct + '%'); cell(row, a.clicks); cell(row, a.message || '—', a.source === 'application' ? 'Self-serve application' : a.source === 'local-demo' ? 'Local demo' : 'Added by admin');
+      const row = document.createElement('tr'); cell(row, a.name || a.email, a.email); badge(row, a.status); cell(row, a.code); cell(row, a.commission_pct + '%', a.review_required ? 'Every sale reviewed by hand' : ''); cell(row, a.clicks); cell(row, a.message || '—', a.source === 'application' ? 'Self-serve application' : a.source === 'local-demo' ? 'Local demo' : 'Added by admin');
       const actions = document.createElement('div'); actions.className = 'actions'; cell(row, '').appendChild(actions);
       if (a.status === 'pending') {
         action(actions, 'Approve partner', async () => {
@@ -118,6 +118,10 @@ __STYLESHEETS__
           if (!window.confirm(label + ' ' + a.email + '?')) return null;
           await api('/api/admin/affiliate-status', { id: a.id, status });
           return status === 'suspended' ? 'Partner suspended.' : 'Partner reactivated.';
+        });
+        action(actions, a.review_required ? 'Stop manual review' : 'Always review sales', async () => {
+          await api('/api/admin/affiliate-review', { id: a.id, review_required: !a.review_required });
+          return a.review_required ? 'Sales from ' + a.email + ' follow the hold period again.' : 'Every sale from ' + a.email + ' now waits for manual approval.';
         });
         if (a.status === 'active') action(actions, 'Revoke sessions', async () => {
           if (!window.confirm('Sign out ' + a.email + ' on all devices and invalidate their existing login links?')) return null;
