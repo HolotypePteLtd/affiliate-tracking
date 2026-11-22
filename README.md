@@ -291,6 +291,9 @@ GET /api/admin/stats?days=30&affiliate_id=1
 GET /api/affiliate/stats?days=30            # the signed-in partner's own numbers
 ```
 
+`examples/partner-stats.html` is a ready page showing a signed-in partner
+their own funnel, clicks per day and where their clicks come from.
+
 The charts are read from D1, so they need no API token. Signups appear when
 signup referrals (`referrals` table) are in use, and per-link numbers when
 short links (`links` table) are; otherwise those fields are `null` / absent.
@@ -340,6 +343,7 @@ context to the helpers directly.
 | `src/route.js` | Route table + `handleAffiliateApi` |
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/analytics.js` | Click details, funnel and chart queries |
+| `examples/partner-stats.html` | Partner page: funnel, clicks per day, countries, devices, referring sites |
 | `functions/api/admin/stats.js` | Funnel and charts for admins |
 | `functions/api/affiliate/stats.js` | Funnel and charts for the signed-in partner |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |

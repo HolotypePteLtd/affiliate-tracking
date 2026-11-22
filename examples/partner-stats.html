@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<!--
+  Reference page for a signed-in partner's numbers: the funnel from clicks to
+  commission, clicks per day, and where clicks come from. Serve it beside
+  your dashboard (same origin as the Worker) and restyle it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your performance</title>
+<style>
+    body { font-family: system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; }
+    .funnel { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .75rem; margin: 1rem 0; }
+    .step { border: 1px solid #ccc; border-radius: 8px; padding: .75rem 1rem; }
+    .step span { display: block; font-size: .8rem; color: #666; }
+    .step strong { font-size: 1.5rem; }
+    svg { width: 100%; height: 140px; border-bottom: 1px solid #ccc; }
+    .lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eee; }
+    td:last-child, th:last-child { text-align: right; }
+    .error { color: #b00020; }
+</style>
+</head>
+<body>
+<h1>Your performance</h1>
+<label>Period
+    <select id="days"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 365 days</option></select>
+</label>
+<p id="msg" class="error" role="status"></p>
+
+<div class="funnel" id="funnel"></div>
+<h2>Clicks per day</h2>
+<svg id="chart" viewBox="0 0 600 140" preserveAspectRatio="none" role="img" aria-label="Clicks per day"></svg>
+<div class="lists">
+    <section><h2>Countries</h2><table><tbody id="countries"></tbody></table></section>
+    <section><h2>Devices</h2><table><tbody id="devices"></tbody></table></section>
+    <section><h2>Referring sites</h2><table><tbody id="referrers"></tbody></table></section>
+</div>
+<section id="links-section" hidden><h2>Your links</h2>
+    <table><thead><tr><th>Link</th><th>Campaign</th><th>Clicks</th><th>Sales</th></tr></thead><tbody id="links"></tbody></table>
+</section>
+
+<script>
+// Point this at your Worker (same origin if the Worker serves your site).
+const API = '';
+const $ = id => document.getElementById(id);
+const money = (cents, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() })
+    .format(cents / 10 ** new Intl.NumberFormat('en', { style: 'currency', currency: (currency || 'usd').toUpperCase() }).resolvedOptions().maximumFractionDigits);
+const sum = (list, key) => list.filter(m => m[key]).map(m => money(m[key], m.currency)).join(' + ') || '—';
+
+function rows(id, items, first) {
+    $(id).replaceChildren();
+    if (!items.length) { const tr = document.createElement('tr'); const td = document.createElement('td'); td.textContent = 'No clicks yet'; tr.appendChild(td); $(id).appendChild(tr); }
+    for (const item of items) {
+        const tr = document.createElement('tr');
+        for (const value of first(item)) { const td = document.createElement('td'); td.textContent = value; tr.appendChild(td); }
+        $(id).appendChild(tr);
+    }
+}
+
+async function load() {
+    $('msg').textContent = '';
+    const res = await fetch(`${API}/api/affiliate/stats?days=${$('days').value}`, { credentials: 'same-origin' });
+    if (res.status === 401) { location.href = '/affiliates/'; return; }
+    const stats = await res.json();
+    if (!res.ok) { $('msg').textContent = stats.error || 'Could not load your numbers.'; return; }
+    const f = stats.funnel;
+    const steps = [['Clicks', f.clicks], ...(f.signups === null ? [] : [['Signups', f.signups]]), ['Customers', f.customers], ['Sales', f.sales],
+        ['Revenue', sum(f.money, 'revenue_cents')], ['Pending', sum(f.money, 'pending_cents')], ['Approved', sum(f.money, 'approved_cents')], ['Paid', sum(f.money, 'paid_cents')]];
+    $('funnel').replaceChildren(...steps.map(([label, value]) => {
+        const div = document.createElement('div'); div.className = 'step';
+        const span = document.createElement('span'); span.textContent = label;
+        const strong = document.createElement('strong'); strong.textContent = value;
+        div.append(span, strong); return div;
+    }));
+    const days = stats.clicks_by_day, max = Math.max(1, ...days.map(d => d.clicks)), width = 600 / days.length;
+    $('chart').replaceChildren(...days.map((d, i) => {
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect'), height = Math.round(d.clicks / max * 130);
+        rect.setAttribute('x', i * width + 1); rect.setAttribute('width', Math.max(1, width - 2));
+        rect.setAttribute('y', 140 - height); rect.setAttribute('height', height); rect.setAttribute('fill', '#3b7d4a');
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title'); title.textContent = `${d.date}: ${d.clicks} clicks`;
+        rect.appendChild(title); return rect;
+    }));
+    rows('countries', stats.top_countries, i => [i.value, i.clicks]);
+    rows('devices', stats.top_devices, i => [i.value, i.clicks]);
+    rows('referrers', stats.top_referrers, i => [i.value, i.clicks]);
+    $('links-section').hidden = !stats.links;
+    if (stats.links) rows('links', stats.links, l => [l.slug, l.campaign || '—', l.clicks, l.sales]);
+}
+
+$('days').addEventListener('change', load);
+load().catch(err => { $('msg').textContent = err.message; });
+</script>
+</body>
+</html>
