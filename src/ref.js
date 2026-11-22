@@ -13,6 +13,7 @@
 // HTTPS and AFFILIATE_REF_LEGACY_COOKIE for a read-only migration fallback.
 // Resolved per-call since env differs per environment.
 import { hostCookieName } from './cookie.js';
+import { clickDetails, writeClickEvent } from './analytics.js';
 
 export const DEFAULT_REF_COOKIE = 'affiliate_ref';
 const REF_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -77,7 +78,7 @@ export async function applyAffiliateRef(request, env, respond, ctx) {
     // reloads, multi-page browsing) is not a second click.
     const existing = readAffiliateRef(request, env);
     if (existing !== aff.code) {
-        const click = recordClick(request, env, aff.id);
+        const click = recordClick(request, env, aff);
         if (ctx?.waitUntil) ctx.waitUntil(click);
         else await click;
     }
@@ -106,12 +107,14 @@ export async function applyAffiliateRef(request, env, respond, ctx) {
     return new Response(assetRes.body, { status: assetRes.status, headers });
 }
 
-async function recordClick(request, env, affiliateId) {
+async function recordClick(request, env, aff) {
     try {
         const ipHash = await hashIp(request.headers.get('cf-connecting-ip'), env.AFFILIATE_IP_SALT);
+        const details = clickDetails(request);
         await env.DB.prepare(
-            'INSERT INTO clicks (affiliate_id, ip_hash, created_at) VALUES (?1,?2,?3)'
-        ).bind(affiliateId, ipHash, Date.now()).run();
+            'INSERT INTO clicks (affiliate_id, ip_hash, created_at, country, device, referrer_host) VALUES (?1,?2,?3,?4,?5,?6)'
+        ).bind(aff.id, ipHash, Date.now(), details.country, details.device, details.referrer_host).run();
+        writeClickEvent(env, { affiliateId: aff.id, code: aff.code, details });
     } catch (err) {
         console.error('Affiliate click insert failed:', err.message);
     }

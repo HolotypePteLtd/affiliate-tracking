@@ -26,6 +26,8 @@ export interface AffiliateEnv {
     AFFILIATE_IP_SALT?: string;
     AFFILIATE_DEV_MODE?: string;
     AFFILIATE_TERMS_VERSION?: string;
+    /** Optional Workers Analytics Engine binding; every click is also written there. */
+    AFFILIATE_ANALYTICS?: { writeDataPoint(point: { indexes?: string[]; blobs?: string[]; doubles?: number[] }): void };
     AFFILIATE_PUBLIC_LIMITER?: {
         limit(options: { key: string }): Promise<{ success: boolean }>;
     };

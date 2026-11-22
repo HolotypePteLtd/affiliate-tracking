@@ -29,7 +29,7 @@ __STYLESHEETS__
   <div class="intro row spread"><div><span class="eyebrow">Partner operations</span><h1>Affiliate overview</h1><p class="muted">Review applications, approve commissions, and track payouts.</p></div><button id="refresh">Refresh</button></div>
   <div id="demo-notice" class="notice" hidden>Local demo data. Demo partner approvals skip email and Stripe. Payments are disabled. <a href="/affiliates/">Try the affiliate dashboard →</a></div>
   <div class="stats"><div class="card"><span class="muted">Active partners</span><div class="stat" id="active-count">—</div></div><div class="card"><span class="muted">Pending partners</span><div class="stat" id="pending-count">—</div></div><div class="card"><span class="muted">Recent pending commission</span><div class="stat" id="pending-total">—</div></div><div class="card"><span class="muted">Recent approved commission</span><div class="stat" id="approved-total">—</div></div></div>
-  <nav class="tabs" aria-label="Admin sections"><button data-tab="affiliates" aria-selected="true">Partners</button><button data-tab="conversions" aria-selected="false">Conversions</button><button data-tab="payouts" aria-selected="false">Payouts</button></nav>
+  <nav class="tabs" aria-label="Admin sections"><button data-tab="affiliates" aria-selected="true">Partners</button><button data-tab="conversions" aria-selected="false">Conversions</button><button data-tab="payouts" aria-selected="false">Payouts</button><button data-tab="performance" aria-selected="false">Performance</button></nav>
   <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
   <section id="affiliates-panel">
     <div class="toolbar row spread"><h2>Partners</h2><div class="row"><label for="partner-filter" class="muted">Status</label><select id="partner-filter"><option value="">All partners</option><option value="pending">Pending</option><option value="active">Active</option><option value="suspended">Suspended</option></select><button id="show-create">Add partner</button></div></div>
@@ -39,6 +39,12 @@ __STYLESHEETS__
   <section id="conversions-panel" hidden>
     <div class="toolbar row spread"><h2>Recent conversions</h2><div class="row"><label for="conversion-filter" class="muted">Status</label><select id="conversion-filter"><option value="">All conversions</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="paying">Paying</option><option value="paid">Paid</option><option value="refunded">Refunded</option></select></div></div>
     <div class="card scroll"><table><thead><tr><th scope="col">Date</th><th scope="col">Partner</th><th scope="col">Customer</th><th scope="col">Sale</th><th scope="col">Commission</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead><tbody id="conversion-rows"></tbody></table><p id="conversions-empty" class="empty" hidden>No conversions match this filter.</p></div><p class="note">Showing the latest 200 conversions. Commission totals above cover these records.</p>
+  </section>
+  <section id="performance-panel" hidden>
+    <div class="toolbar row spread"><h2>Performance</h2><div class="row"><label for="stats-days" class="muted">Period</label><select id="stats-days"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 365 days</option></select></div></div>
+    <div class="card"><span class="muted">Clicks per day</span><svg id="clicks-chart" role="img" aria-label="Clicks per day" width="100%" height="120" viewBox="0 0 600 120" preserveAspectRatio="none"></svg></div>
+    <div class="card scroll"><table><thead><tr><th scope="col">Partner</th><th scope="col">Clicks</th><th scope="col">Signups</th><th scope="col">Customers</th><th scope="col">Sales</th><th scope="col">Revenue</th><th scope="col">Commission pending</th><th scope="col">Approved</th><th scope="col">Paid</th></tr></thead><tbody id="funnel-rows"></tbody></table><p id="funnel-empty" class="empty" hidden>No partner activity in this period.</p></div>
+    <div class="stats"><div class="card"><span class="muted">Top countries</span><table><tbody id="top-countries"></tbody></table></div><div class="card"><span class="muted">Devices</span><table><tbody id="top-devices"></tbody></table></div><div class="card"><span class="muted">Referring sites</span><table><tbody id="top-referrers"></tbody></table></div></div>
   </section>
   <section id="payouts-panel" hidden>
     <div class="toolbar row spread"><h2>Recent payouts</h2><button id="run-payouts" class="primary">Run approved payouts</button></div>
@@ -154,10 +160,36 @@ __STYLESHEETS__
     });
     $('run-payouts').disabled = busy || localDemo || !(state.conversions.some(c => c.status === 'approved') || state.payouts.some(p => p.status === 'pending'));
     $('run-payouts').title = localDemo ? 'Payments are disabled in local demo mode.' : '';
+    renderStats();
+  }
+  function renderStats() {
+    const stats = state.stats; if (!stats) return;
+    const svg = $('clicks-chart'); svg.replaceChildren();
+    const days = stats.clicks_by_day || []; const max = Math.max(1, ...days.map(d => d.clicks)); const width = 600 / Math.max(1, days.length);
+    days.forEach((d, i) => {
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect'); const height = Math.round(d.clicks / max * 110);
+      rect.setAttribute('x', String(i * width + 1)); rect.setAttribute('width', String(Math.max(1, width - 2)));
+      rect.setAttribute('y', String(120 - height)); rect.setAttribute('height', String(height)); rect.setAttribute('fill', '#8fd694');
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title'); title.textContent = d.date + ': ' + d.clicks + ' clicks'; rect.appendChild(title);
+      svg.appendChild(rect);
+    });
+    const byCurrency = (list, key) => list.filter(m => m[key]).map(m => money(m[key], m.currency)).join(' + ') || '—';
+    const rows = (stats.funnel || []).filter(f => f.clicks || f.sales || f.signups || f.money.length);
+    $('funnel-rows').replaceChildren(); $('funnel-empty').hidden = rows.length > 0;
+    rows.forEach(f => {
+      const row = document.createElement('tr'); cell(row, f.name || f.code, f.code); cell(row, f.clicks); cell(row, f.signups === null ? '—' : f.signups);
+      cell(row, f.customers); cell(row, f.sales); cell(row, byCurrency(f.money, 'revenue_cents')); cell(row, byCurrency(f.money, 'pending_cents'));
+      cell(row, byCurrency(f.money, 'approved_cents')); cell(row, byCurrency(f.money, 'paid_cents')); $('funnel-rows').appendChild(row);
+    });
+    [['top-countries', stats.top_countries], ['top-devices', stats.top_devices], ['top-referrers', stats.top_referrers]].forEach(([id, list]) => {
+      $(id).replaceChildren();
+      if (!list.length) { const row = document.createElement('tr'); cell(row, 'No clicks yet'); $(id).appendChild(row); }
+      list.forEach(item => { const row = document.createElement('tr'); cell(row, item.value); cell(row, item.clicks); $(id).appendChild(row); });
+    });
   }
   async function load() {
-    const [partners, conversions, payouts] = await Promise.all([api('/api/admin/affiliates'), api('/api/admin/conversions'), api('/api/admin/payouts')]);
-    state = { affiliates: partners.affiliates, conversions: conversions.conversions, payouts: payouts.payouts };
+    const [partners, conversions, payouts, stats] = await Promise.all([api('/api/admin/affiliates'), api('/api/admin/conversions'), api('/api/admin/payouts'), api('/api/admin/stats?days=' + $('stats-days').value)]);
+    state = { affiliates: partners.affiliates, conversions: conversions.conversions, payouts: payouts.payouts, stats };
     $('login').hidden = true; $('dashboard').hidden = false; $('sign-out').hidden = false; render();
   }
   async function mutate(handler) {
@@ -182,6 +214,7 @@ __STYLESHEETS__
   $('sign-out').addEventListener('click', async () => { try { await api('/api/admin/logout', {}); signedOut(); } catch (error) { feedback(error.message, true); } });
   $('refresh').addEventListener('click', () => mutate(async () => 'Data refreshed.'));
   $('partner-filter').addEventListener('change', render); $('conversion-filter').addEventListener('change', render);
+  $('stats-days').addEventListener('change', async () => { try { state.stats = await api('/api/admin/stats?days=' + $('stats-days').value); renderStats(); } catch (error) { feedback(error.message, true); } });
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-tab]').forEach(tab => { const selected = tab === button; tab.setAttribute('aria-selected', String(selected)); $(tab.dataset.tab + '-panel').hidden = !selected; }); feedback('');
   }));

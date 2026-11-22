@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0014_click_details.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -275,6 +276,35 @@ payout run claims the remaining approved commissions under a fresh key.
 For a verified legacy transfer without attached conversions, pass the
 original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
 
+### Performance: click analytics and the funnel
+
+Each click now records its country (Cloudflare's `request.cf.country`), a
+device class (mobile, tablet, desktop) and the referring site's host, never
+the full referrer URL. The admin dashboard's **Performance** tab shows clicks
+per day, top countries, devices and referring sites, and the funnel for each
+partner: clicks, signups, customers, sales, revenue, and commission pending,
+approved and paid (per currency) for the last 7, 30, 90 or 365 days.
+
+```bash
+GET /api/admin/stats?days=30                # every partner (admin)
+GET /api/admin/stats?days=30&affiliate_id=1
+GET /api/affiliate/stats?days=30            # the signed-in partner's own numbers
+```
+
+The charts are read from D1, so they need no API token. Signups appear when
+signup referrals (`referrals` table) are in use, and per-link numbers when
+short links (`links` table) are; otherwise those fields are `null` / absent.
+To also send every click to Workers Analytics Engine for your own analysis,
+add a binding named `AFFILIATE_ANALYTICS`:
+
+```toml
+[[analytics_engine_datasets]]
+binding = "AFFILIATE_ANALYTICS"
+dataset = "affiliate_clicks"
+```
+
+Each data point: index = affiliate id; blobs = code, country, device, referrer host.
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -309,6 +339,9 @@ context to the helpers directly.
 | `src/index.js` | Public API — the four exports |
 | `src/route.js` | Route table + `handleAffiliateApi` |
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
+| `src/analytics.js` | Click details, funnel and chart queries |
+| `functions/api/admin/stats.js` | Funnel and charts for admins |
+| `functions/api/affiliate/stats.js` | Funnel and charts for the signed-in partner |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
 | `src/webhook.js` | Conversion, refund, and dispute recording |
 | `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
