@@ -15,6 +15,11 @@
 //       Response with the attribution cookie appended, or null when the URL
 //       has no ?ref= (or the code is unknown) so you fall through untouched.
 //
+//   handleAffiliateLink(request, env)
+//       Short links: GET /r/<slug> redirects to the link's destination with
+//       ?ref= and aff_link= so applyAffiliateRef records the click per link.
+//       Returns null for any other path.
+//
 //   attachAffiliateAttribution(params, request, env, { promoCode }?)
 //       Await this on your Checkout Session URLSearchParams before POSTing to
 //       Stripe. Adds client_reference_id, metadata, and the buyer-discount
@@ -40,5 +45,6 @@ export { handleAffiliateApi, affiliateRoutes } from './route.js';
 export { adminDashboard } from './admin-dashboard.js';
 export { applyAffiliateRef, refCookieName, DEFAULT_REF_COOKIE } from './ref.js';
 export { attachAffiliateAttribution } from './checkout.js';
+export { handleAffiliateLink, DEFAULT_LINK_PREFIX } from './links.js';
 export { PromotionCodeError } from './promotion.js';
 export { recordConversion, recordRefund } from './webhook.js';

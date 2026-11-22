@@ -10,6 +10,8 @@ import { onRequestPost as applyPost } from '../functions/api/affiliate/apply.js'
 import { onRequestGet as affMeGet } from '../functions/api/affiliate/me.js';
 import { onRequestGet as affExportGet } from '../functions/api/affiliate/export.js';
 import { onRequestPost as affLogoutPost } from '../functions/api/affiliate/logout.js';
+import { onRequestGet as affLinksGet, onRequestPost as affLinksPost, onArchivePost as affLinkArchive } from '../functions/api/affiliate/links.js';
+import { onRequestGet as adminLinksGet, onRequestPost as adminLinksPost, onArchivePost as adminLinkArchive } from '../functions/api/admin/links.js';
 import { onRequestGet as affConnectOnboarding } from '../functions/api/affiliate/connect-onboarding.js';
 import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from '../functions/api/admin/affiliates.js';
 import { onRequestPost as adminAffiliateApprove } from '../functions/api/admin/affiliate-approve.js';
@@ -40,6 +42,12 @@ export const affiliateRoutes = [
     ['GET', '/api/affiliate/export', affExportGet],
     ['POST', '/api/affiliate/logout', affLogoutPost],
     ['GET', '/api/affiliate/connect-onboarding', affConnectOnboarding],
+    ['GET', '/api/affiliate/links', affLinksGet],
+    ['POST', '/api/affiliate/links', affLinksPost],
+    ['POST', '/api/affiliate/link-archive', affLinkArchive],
+    ['GET', '/api/admin/links', adminLinksGet],
+    ['POST', '/api/admin/links', adminLinksPost],
+    ['POST', '/api/admin/link-archive', adminLinkArchive],
     ['GET', '/api/admin/affiliates', adminAffiliatesGet],
     ['POST', '/api/admin/affiliates', adminAffiliatesPost],
     ['POST', '/api/admin/affiliate-approve', adminAffiliateApprove],

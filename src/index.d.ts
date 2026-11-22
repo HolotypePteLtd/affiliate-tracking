@@ -26,6 +26,10 @@ export interface AffiliateEnv {
     AFFILIATE_IP_SALT?: string;
     AFFILIATE_DEV_MODE?: string;
     AFFILIATE_TERMS_VERSION?: string;
+    /** Path prefix of short links. Default /r/. */
+    AFFILIATE_LINK_PREFIX?: string;
+    /** Origin short links are shown under, e.g. https://go.example.com. Default: SITE_URL. */
+    AFFILIATE_LINK_BASE_URL?: string;
     AFFILIATE_PUBLIC_LIMITER?: {
         limit(options: { key: string }): Promise<{ success: boolean }>;
     };
@@ -121,3 +125,7 @@ export function recordConversion<T extends CheckoutSession>(
 
 /** Records a verified refund or dispute webhook and returns the number of conversions updated. */
 export function recordRefund(event: StripeEvent | null | undefined, env: AffiliateEnv): Promise<number>;
+
+export const DEFAULT_LINK_PREFIX: '/r/';
+/** Redirects GET <prefix><slug> to the link's destination with ?ref= and aff_link=. Null for any other request. */
+export function handleAffiliateLink(request: Request, env: AffiliateEnv): Promise<Response | null>;
