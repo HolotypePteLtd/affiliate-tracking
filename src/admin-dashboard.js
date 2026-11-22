@@ -29,7 +29,7 @@ __STYLESHEETS__
   <div class="intro row spread"><div><span class="eyebrow">Partner operations</span><h1>Affiliate overview</h1><p class="muted">Review applications, approve commissions, and track payouts.</p></div><button id="refresh">Refresh</button></div>
   <div id="demo-notice" class="notice" hidden>Local demo data. Demo partner approvals skip email and Stripe. Payments are disabled. <a href="/affiliates/">Try the affiliate dashboard →</a></div>
   <div class="stats"><div class="card"><span class="muted">Active partners</span><div class="stat" id="active-count">—</div></div><div class="card"><span class="muted">Pending partners</span><div class="stat" id="pending-count">—</div></div><div class="card"><span class="muted">Recent pending commission</span><div class="stat" id="pending-total">—</div></div><div class="card"><span class="muted">Recent approved commission</span><div class="stat" id="approved-total">—</div></div></div>
-  <nav class="tabs" aria-label="Admin sections"><button data-tab="affiliates" aria-selected="true">Partners</button><button data-tab="conversions" aria-selected="false">Conversions</button><button data-tab="payouts" aria-selected="false">Payouts</button></nav>
+  <nav class="tabs" aria-label="Admin sections"><button data-tab="affiliates" aria-selected="true">Partners</button><button data-tab="conversions" aria-selected="false">Conversions</button><button data-tab="payouts" aria-selected="false">Payouts</button><button data-tab="rules" aria-selected="false">Rules &amp; bonuses</button></nav>
   <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
   <section id="affiliates-panel">
     <div class="toolbar row spread"><h2>Partners</h2><div class="row"><label for="partner-filter" class="muted">Status</label><select id="partner-filter"><option value="">All partners</option><option value="pending">Pending</option><option value="active">Active</option><option value="suspended">Suspended</option></select><button id="show-create">Add partner</button></div></div>
@@ -39,6 +39,27 @@ __STYLESHEETS__
   <section id="conversions-panel" hidden>
     <div class="toolbar row spread"><h2>Recent conversions</h2><div class="row"><label for="conversion-filter" class="muted">Status</label><select id="conversion-filter"><option value="">All conversions</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="paying">Paying</option><option value="paid">Paid</option><option value="refunded">Refunded</option></select></div></div>
     <div class="card scroll"><table><thead><tr><th scope="col">Date</th><th scope="col">Partner</th><th scope="col">Customer</th><th scope="col">Sale</th><th scope="col">Commission</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead><tbody id="conversion-rows"></tbody></table><p id="conversions-empty" class="empty" hidden>No conversions match this filter.</p></div><p class="note">Showing the latest 200 conversions. Commission totals above cover these records.</p>
+  </section>
+  <section id="rules-panel" hidden>
+    <div class="toolbar row spread"><h2>Commission rules</h2></div>
+    <p class="muted">Without rules each partner earns their own commission %. For each item sold the most specific rule wins: partner and product, then product, then partner, then everyone.</p>
+    <form id="rule-form" class="card create"><h2>Add a rule</h2><div class="fields">
+      <label>Pays<select name="kind"><option value="percent">A percent of the sale</option><option value="fixed">A fixed amount per unit</option></select></label>
+      <label>Percent<input name="percent" type="number" min="0" max="100" step="0.1" value="20"></label>
+      <label>Fixed amount<input name="fixed" type="number" min="0" step="0.01" placeholder="e.g. 15.00" disabled></label>
+      <label>Currency<input name="currency" placeholder="usd" maxlength="3" disabled></label>
+      <label>Partner<select name="affiliate_id" id="rule-partner"><option value="">Every partner</option></select></label>
+      <label>Stripe product or price<input name="product_id" placeholder="prod_… or price_… (empty: everything)"></label>
+      <label>From sales this month<input name="min_monthly_sales" type="number" min="0" value="0"></label>
+      <label>Most per customer<input name="cap" type="number" min="0" step="0.01" placeholder="no limit"></label>
+    </div><button class="primary" type="submit">Add rule</button></form>
+    <div class="card scroll"><table><thead><tr><th scope="col">Pays</th><th scope="col">Partner</th><th scope="col">Product</th><th scope="col">From sales/month</th><th scope="col">Most per customer</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead><tbody id="rule-rows"></tbody></table><p id="rules-empty" class="empty" hidden>No rules: every partner earns their own commission %.</p></div>
+    <form id="bonus-form" class="card create"><h2>One-off bonus</h2><div class="fields">
+      <label>Partner<select name="affiliate_id" id="bonus-partner" required></select></label>
+      <label>Amount<input name="amount" type="number" min="0.01" step="0.01" required></label>
+      <label>Currency<input name="currency" value="usd" maxlength="3" required></label>
+      <label>Note<input name="note" maxlength="200" placeholder="Launch week" required></label>
+    </div><button class="primary" type="submit">Add bonus</button><p class="note">Bonuses are approved straight away and paid with the partner's next payout.</p></form>
   </section>
   <section id="payouts-panel" hidden>
     <div class="toolbar row spread"><h2>Recent payouts</h2><button id="run-payouts" class="primary">Run approved payouts</button></div>
@@ -130,7 +151,7 @@ __STYLESHEETS__
     const conversions = state.conversions.filter(c => !$('conversion-filter').value || c.status === $('conversion-filter').value);
     $('conversion-rows').replaceChildren(); $('conversions-empty').hidden = conversions.length > 0;
     conversions.forEach(c => {
-      const row = document.createElement('tr'); cell(row, date(c.created_at)); cell(row, c.affiliate_name || c.affiliate_code); cell(row, c.customer_email); cell(row, money(c.amount_cents, c.currency)); cell(row, money(c.commission_cents, c.currency)); badge(row, c.status);
+      const row = document.createElement('tr'); cell(row, date(c.created_at)); cell(row, c.affiliate_name || c.affiliate_code); cell(row, c.bonus_note ? 'Bonus' : c.customer_email, c.bonus_note || ''); cell(row, money(c.amount_cents, c.currency)); cell(row, money(c.commission_cents, c.currency)); badge(row, c.status);
       if (c.status === 'pending' || c.status === 'approved') action(cell(row, ''), c.status === 'pending' ? 'Approve' : 'Return to pending', async () => {
         await api('/api/admin/conversion-approve', { id: c.id, approved: c.status === 'pending' }); return 'Conversion updated.';
       }); else cell(row, '—');
@@ -154,10 +175,40 @@ __STYLESHEETS__
     });
     $('run-payouts').disabled = busy || localDemo || !(state.conversions.some(c => c.status === 'approved') || state.payouts.some(p => p.status === 'pending'));
     $('run-payouts').title = localDemo ? 'Payments are disabled in local demo mode.' : '';
+    renderRules();
+  }
+  const minor = (amount, cur) => {
+    const code = String(cur || 'usd').toLowerCase();
+    const decimals = (code === 'isk' || code === 'ugx') ? 2 : ZERO_DECIMAL.has(code) ? 0
+      : new Intl.NumberFormat('en-US', { style: 'currency', currency: code.toUpperCase() }).resolvedOptions().maximumFractionDigits;
+    return Math.round(Number(amount) * 10 ** decimals);
+  };
+  function renderRules() {
+    const partnerName = id => { const a = state.affiliates.find(p => p.id === id); return a ? (a.name || a.email) : 'Partner ' + id; };
+    [['rule-partner', true], ['bonus-partner', false]].forEach(([id, everyone]) => {
+      const select = $(id); const current = select.value; select.replaceChildren();
+      if (everyone) { const option = document.createElement('option'); option.value = ''; option.textContent = 'Every partner'; select.appendChild(option); }
+      state.affiliates.filter(a => a.status === 'active').forEach(a => { const option = document.createElement('option'); option.value = String(a.id); option.textContent = a.name || a.email; select.appendChild(option); });
+      select.value = [...select.options].some(option => option.value === current) ? current : (select.options[0]?.value ?? '');
+    });
+    const rules = state.rules || [];
+    $('rule-rows').replaceChildren(); $('rules-empty').hidden = rules.length > 0;
+    rules.forEach(r => {
+      const row = document.createElement('tr');
+      cell(row, r.kind === 'percent' ? r.percent + '%' : money(r.fixed_cents, r.currency) + ' per unit');
+      cell(row, r.affiliate_id === null ? 'Every partner' : partnerName(r.affiliate_id)); cell(row, r.product_id || 'Everything');
+      cell(row, r.min_monthly_sales || '—'); cell(row, r.cap_per_customer_cents === null ? '—' : money(r.cap_per_customer_cents, r.currency));
+      badge(row, r.active ? 'active' : 'archived');
+      if (r.active) action(cell(row, ''), 'Archive', async () => {
+        if (!window.confirm('Stop using this rule? Commissions already earned stay as they are.')) return null;
+        await api('/api/admin/commission-rule-archive', { id: r.id }); return 'Rule archived.';
+      }); else cell(row, '—');
+      $('rule-rows').appendChild(row);
+    });
   }
   async function load() {
-    const [partners, conversions, payouts] = await Promise.all([api('/api/admin/affiliates'), api('/api/admin/conversions'), api('/api/admin/payouts')]);
-    state = { affiliates: partners.affiliates, conversions: conversions.conversions, payouts: payouts.payouts };
+    const [partners, conversions, payouts, rules] = await Promise.all([api('/api/admin/affiliates'), api('/api/admin/conversions'), api('/api/admin/payouts'), api('/api/admin/commission-rules')]);
+    state = { affiliates: partners.affiliates, conversions: conversions.conversions, payouts: payouts.payouts, rules: rules.rules };
     $('login').hidden = true; $('dashboard').hidden = false; $('sign-out').hidden = false; render();
   }
   async function mutate(handler) {
@@ -185,6 +236,25 @@ __STYLESHEETS__
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-tab]').forEach(tab => { const selected = tab === button; tab.setAttribute('aria-selected', String(selected)); $(tab.dataset.tab + '-panel').hidden = !selected; }); feedback('');
   }));
+  $('rule-form').elements.kind.addEventListener('change', event => {
+    const fixed = event.target.value === 'fixed'; const form = $('rule-form').elements;
+    form.percent.disabled = fixed; form.fixed.disabled = !fixed; form.currency.disabled = !fixed;
+  });
+  $('rule-form').addEventListener('submit', event => { event.preventDefault(); const formEl = event.currentTarget; mutate(async () => {
+    const f = formEl.elements; const body = { kind: f.kind.value, min_monthly_sales: Number(f.min_monthly_sales.value || 0) };
+    if (body.kind === 'percent') body.percent = Number(f.percent.value);
+    else { body.currency = f.currency.value.trim().toLowerCase(); body.fixed_cents = minor(f.fixed.value, body.currency); }
+    if (f.affiliate_id.value) body.affiliate_id = Number(f.affiliate_id.value);
+    if (f.product_id.value.trim()) body.product_id = f.product_id.value.trim();
+    if (f.cap.value) body.cap_per_customer_cents = minor(f.cap.value, body.currency || 'usd');
+    await api('/api/admin/commission-rules', body); formEl.reset(); formEl.elements.kind.dispatchEvent(new Event('change')); return 'Rule added.';
+  }); });
+  $('bonus-form').addEventListener('submit', event => { event.preventDefault(); const formEl = event.currentTarget; mutate(async () => {
+    const f = formEl.elements; const currency = f.currency.value.trim().toLowerCase();
+    if (!window.confirm('Add a ' + money(minor(f.amount.value, currency), currency) + ' bonus? It will be paid with the next payout.')) return null;
+    await api('/api/admin/bonus', { affiliate_id: Number(f.affiliate_id.value), amount_cents: minor(f.amount.value, currency), currency, note: f.note.value.trim() });
+    f.amount.value = ''; f.note.value = ''; return 'Bonus added.';
+  }); });
   $('show-create').addEventListener('click', () => { $('create-form').hidden = !$('create-form').hidden; if (!$('create-form').hidden) $('create-form').elements.email.focus(); });
   $('create-form').addEventListener('submit', event => { event.preventDefault(); mutate(async () => {
     const form = new FormData(event.currentTarget); await api('/api/admin/affiliates', { email: form.get('email'), name: form.get('name'), code: form.get('code'), commissionPct: Number(form.get('commissionPct')) });

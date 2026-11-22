@@ -316,6 +316,9 @@ curl -X POST https://yoursite.com/api/admin/bonus -H "x-admin-token: $ADMIN_TOKE
   -H "Content-Type: application/json" -d '{"affiliate_id":1,"amount_cents":5000,"currency":"usd","note":"Launch week"}'
 ```
 
+The admin dashboard's **Rules & bonuses** tab lists the rules, adds and archives
+them, and adds bonuses; bonus lines show in Conversions with their note.
+
 Set `AFFILIATE_MIN_PAYOUT_CENTS` (e.g. `"5000"`) to hold back affiliates who are
 owed less; their commissions roll over to a later run.
 
