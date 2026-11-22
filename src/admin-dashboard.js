@@ -34,6 +34,10 @@ __STYLESHEETS__
   <section id="affiliates-panel">
     <div class="toolbar row spread"><h2>Partners</h2><div class="row"><label for="partner-filter" class="muted">Status</label><select id="partner-filter"><option value="">All partners</option><option value="pending">Pending</option><option value="active">Active</option><option value="suspended">Suspended</option></select><button id="show-create">Add partner</button></div></div>
     <form id="create-form" class="card create" hidden><h2>Add a partner</h2><div class="fields"><label>Email<input name="email" type="email" required></label><label>Name<input name="name"></label><label>Referral code<input name="code" pattern="[a-zA-Z0-9_-]{2,}" required></label><label>Commission %<input name="commissionPct" type="number" min="1" max="100" value="20" required></label></div><button class="primary" type="submit">Create partner</button><p class="note">New partners start pending. Approval activates their referral code.</p></form>
+    <section id="links-card" class="card create" hidden><div class="row spread"><h2 id="links-title">Links</h2><button id="links-close">Close</button></div>
+      <form id="links-form" class="fields"><label>Goes to<input name="destination" value="/" required></label><label>Campaign<input name="campaign"></label><label>Short name<input name="slug" placeholder="made for you if empty"></label><button class="primary" type="submit">Create link</button></form>
+      <div class="scroll"><table><thead><tr><th scope="col">Link</th><th scope="col">Campaign</th><th scope="col">Clicks</th><th scope="col">Sales</th><th scope="col">Commission</th><th scope="col">Action</th></tr></thead><tbody id="link-rows"></tbody></table><p id="links-empty" class="empty" hidden>No links yet.</p></div>
+    </section>
     <div class="card scroll"><table><thead><tr><th scope="col">Partner</th><th scope="col">Status</th><th scope="col">Referral code</th><th scope="col">Commission</th><th scope="col">Clicks</th><th scope="col">Application</th><th scope="col">Action</th></tr></thead><tbody id="affiliate-rows"></tbody></table><p id="affiliates-empty" class="empty" hidden>No partners match this filter.</p></div>
   </section>
   <section id="conversions-panel" hidden>
@@ -98,6 +102,7 @@ __STYLESHEETS__
     button.disabled = busy; button.addEventListener('click', () => mutate(handler)); container.appendChild(button);
   }
   function render() {
+    $('link-rows').querySelectorAll('button').forEach(button => button.disabled = busy);
     $('active-count').textContent = state.affiliates.filter(a => a.status === 'active').length;
     $('pending-count').textContent = state.affiliates.filter(a => a.status === 'pending').length;
     ['pending','approved'].forEach(status => $(status + '-total').textContent = sumByCurrency(state.conversions.filter(c => c.status === status)));
@@ -119,6 +124,7 @@ __STYLESHEETS__
           await api('/api/admin/affiliate-status', { id: a.id, status });
           return status === 'suspended' ? 'Partner suspended.' : 'Partner reactivated.';
         });
+        action(actions, 'Links', async () => { await showLinks(a); return null; });
         if (a.status === 'active') action(actions, 'Revoke sessions', async () => {
           if (!window.confirm('Sign out ' + a.email + ' on all devices and invalidate their existing login links?')) return null;
           await api('/api/admin/affiliate-revoke-sessions', { id: a.id });
@@ -155,6 +161,24 @@ __STYLESHEETS__
     $('run-payouts').disabled = busy || localDemo || !(state.conversions.some(c => c.status === 'approved') || state.payouts.some(p => p.status === 'pending'));
     $('run-payouts').title = localDemo ? 'Payments are disabled in local demo mode.' : '';
   }
+  let linksFor = null;
+  async function showLinks(partner) {
+    linksFor = partner || linksFor; if (!linksFor) return;
+    const data = await api('/api/admin/links?affiliate_id=' + linksFor.id);
+    $('links-title').textContent = 'Links for ' + (linksFor.name || linksFor.email);
+    const active = data.links.filter(l => l.status === 'active');
+    $('link-rows').replaceChildren(); $('links-empty').hidden = active.length > 0;
+    active.forEach(l => {
+      const row = document.createElement('tr'); cell(row, l.url, 'Goes to ' + l.destination); cell(row, l.campaign || '—');
+      cell(row, l.clicks); cell(row, l.conversions); cell(row, money(l.commission_cents));
+      action(cell(row, ''), 'Archive', async () => {
+        if (!window.confirm('Archive ' + l.url + '? It stops redirecting.')) return null;
+        await api('/api/admin/link-archive', { affiliate_id: linksFor.id, id: l.id }); await showLinks(); return 'Link archived.';
+      });
+      $('link-rows').appendChild(row);
+    });
+    $('links-card').hidden = false;
+  }
   async function load() {
     const [partners, conversions, payouts] = await Promise.all([api('/api/admin/affiliates'), api('/api/admin/conversions'), api('/api/admin/payouts')]);
     state = { affiliates: partners.affiliates, conversions: conversions.conversions, payouts: payouts.payouts };
@@ -185,6 +209,12 @@ __STYLESHEETS__
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-tab]').forEach(tab => { const selected = tab === button; tab.setAttribute('aria-selected', String(selected)); $(tab.dataset.tab + '-panel').hidden = !selected; }); feedback('');
   }));
+  $('links-close').addEventListener('click', () => { $('links-card').hidden = true; linksFor = null; });
+  $('links-form').addEventListener('submit', event => { event.preventDefault(); const formEl = event.currentTarget; mutate(async () => {
+    const form = new FormData(formEl); const body = { affiliate_id: linksFor.id, destination: form.get('destination') };
+    if (form.get('campaign')) body.campaign = form.get('campaign'); if (form.get('slug')) body.slug = String(form.get('slug')).toLowerCase();
+    const data = await api('/api/admin/links', body); formEl.reset(); await showLinks(); return 'Created ' + data.link.url;
+  }); });
   $('show-create').addEventListener('click', () => { $('create-form').hidden = !$('create-form').hidden; if (!$('create-form').hidden) $('create-form').elements.email.focus(); });
   $('create-form').addEventListener('submit', event => { event.preventDefault(); mutate(async () => {
     const form = new FormData(event.currentTarget); await api('/api/admin/affiliates', { email: form.get('email'), name: form.get('name'), code: form.get('code'), commissionPct: Number(form.get('commissionPct')) });

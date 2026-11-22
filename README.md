@@ -311,7 +311,9 @@ POST /api/affiliate/links {"destination":"/pricing","campaign":"YouTube","slug":
 POST /api/affiliate/link-archive {"id":"<link id>"}
 ```
 
-Admins can do the same for any affiliate with `GET /api/admin/links?affiliate_id=1`,
+`examples/partner-links.html` is a ready page for partners to manage their links.
+In the admin dashboard, the **Links** button on each partner opens the same list
+and form. Admins can also do the same through `GET /api/admin/links?affiliate_id=1`,
 `POST /api/admin/links {"affiliate_id":1, ...}` and `POST /api/admin/link-archive`.
 
 ### Partner access and onboarding
@@ -350,6 +352,7 @@ context to the helpers directly.
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
 | `src/links.js` | Short links (`handleAffiliateLink`) |
+| `examples/partner-links.html` | Partner page: create, list and archive links |
 | `functions/api/affiliate/links.js` | Partner link management |
 | `functions/api/admin/links.js` | Admin link management |
 | `src/webhook.js` | Conversion, refund, and dispute recording |

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<!--
+  Reference page for a signed-in partner's short links: create, list with
+  clicks and sales, archive. Serve it beside your dashboard (same origin as
+  the Worker, so the partner's session cookie is sent) and restyle it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your links</title>
+<style>
+    body { font-family: system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; }
+    form { border: 1px solid #ccc; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; display: grid; gap: .6rem; grid-template-columns: 1fr 1fr 1fr auto; align-items: end; }
+    label { display: block; font-size: .85rem; }
+    input { width: 100%; box-sizing: border-box; padding: .5rem; border: 1px solid #999; border-radius: 4px; font: inherit; margin-top: .2rem; }
+    button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    td small { display: block; color: #666; }
+    .num { text-align: right; }
+    .msg { min-height: 1.2em; }
+    .error { color: #b00020; }
+    [hidden] { display: none; }
+    @media (max-width: 640px) { form { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Your links</h1>
+<p>Make a link for each place you share, so you can see which one brings clicks and sales.</p>
+
+<form id="create">
+    <label>Goes to (a page on our site)<input id="destination" value="/" required></label>
+    <label>Campaign (optional)<input id="campaign" placeholder="YouTube, newsletter…"></label>
+    <label>Short name (optional)<input id="slug" placeholder="made for you if empty"></label>
+    <button type="submit">Create link</button>
+</form>
+<p class="msg" id="msg" role="status"></p>
+
+<table>
+    <thead><tr><th>Link</th><th>Campaign</th><th class="num">Clicks</th><th class="num">Sales</th><th class="num">Commission</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+</table>
+<p id="empty" hidden>No links yet.</p>
+
+<script>
+// Point this at your Worker (same origin if the Worker serves your site).
+const API = '';
+const $ = id => document.getElementById(id);
+
+function say(text, error = false) { $('msg').textContent = text; $('msg').className = 'msg' + (error ? ' error' : ''); }
+
+async function call(path, body) {
+    const res = await fetch(API + path, body === undefined ? { credentials: 'same-origin' } : {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { location.href = '/affiliates/'; throw new Error('Signed out'); }
+    if (!res.ok) throw new Error(data.error || 'Request failed (HTTP ' + res.status + ')');
+    return data;
+}
+
+function cell(row, text, detail) {
+    const td = document.createElement('td'); td.textContent = text;
+    if (detail) { const small = document.createElement('small'); small.textContent = detail; td.appendChild(small); }
+    row.appendChild(td); return td;
+}
+
+async function load() {
+    const { links } = await call('/api/affiliate/links');
+    const active = links.filter(link => link.status === 'active');
+    $('rows').replaceChildren(); $('empty').hidden = active.length > 0;
+    for (const link of active) {
+        const row = document.createElement('tr');
+        cell(row, link.url, 'Goes to ' + link.destination);
+        cell(row, link.campaign || '—');
+        cell(row, link.clicks).className = 'num';
+        cell(row, link.conversions).className = 'num';
+        cell(row, (link.commission_cents / 100).toFixed(2)).className = 'num';
+        const actions = cell(row, '');
+        const copy = document.createElement('button'); copy.textContent = 'Copy';
+        copy.addEventListener('click', async () => { await navigator.clipboard.writeText(link.url); say('Copied ' + link.url); });
+        const archive = document.createElement('button'); archive.textContent = 'Archive';
+        archive.addEventListener('click', async () => {
+            if (!confirm('Archive ' + link.url + '? It stops working.')) return;
+            try { await call('/api/affiliate/link-archive', { id: link.id }); say('Link archived.'); await load(); } catch (e) { say(e.message, true); }
+        });
+        actions.append(copy, ' ', archive);
+        $('rows').appendChild(row);
+    }
+}
+
+$('create').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { destination: $('destination').value.trim() };
+    if ($('campaign').value.trim()) body.campaign = $('campaign').value.trim();
+    if ($('slug').value.trim()) body.slug = $('slug').value.trim().toLowerCase();
+    try {
+        const { link } = await call('/api/affiliate/links', body);
+        $('campaign').value = ''; $('slug').value = '';
+        say('Created ' + link.url);
+        await load();
+    } catch (err) { say(err.message, true); }
+});
+
+load().catch(err => say(err.message, true));
+</script>
+</body>
+</html>
