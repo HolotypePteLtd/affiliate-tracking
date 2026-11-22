@@ -110,13 +110,23 @@ describe('recurring commissions', () => {
         const asked = [];
         globalThis.fetch = async url => {
             asked.push(String(url));
-            const invoiceId = new URL(url).searchParams.get('invoice');
-            return Response.json({ data: [{ payment: { type: 'payment_intent', payment_intent: 'pi_for_' + invoiceId } }] });
+            const { pathname, searchParams } = new URL(url);
+            // Newer API versions: the invoice has no payment_intent, invoice_payments does.
+            if (pathname.startsWith('/v1/invoices/')) return Response.json({ id: pathname.split('/').pop(), object: 'invoice' });
+            return Response.json({ data: [{ payment: { type: 'payment_intent', payment_intent: 'pi_for_' + searchParams.get('invoice') } }] });
         };
         await subscribe(env);
         await recordInvoicePayment(invoice(1, { payment_intent: undefined }), {}, env);
         assert.deepEqual(rows().map(r => r.payment_intent), ['pi_for_in_first', 'pi_for_in_1']);
-        assert.ok(asked.every(url => url.startsWith('https://api.stripe.com/v1/invoice_payments?invoice=')));
+        assert.deepEqual(asked.map(url => new URL(url).pathname), ['/v1/invoices/in_first', '/v1/invoice_payments', '/v1/invoice_payments']);
+    });
+
+    it('reads the payment intent from the invoice on API versions before 2025-03-31.basil', async () => {
+        const { env, rows } = setup();
+        env.STRIPE_SECRET_KEY = 'sk_test_unused';
+        globalThis.fetch = async url => Response.json({ id: 'in_first', object: 'invoice', payment_intent: 'pi_old_shape' });
+        await subscribe(env);
+        assert.deepEqual(rows().map(r => r.payment_intent), ['pi_old_shape']);
     });
 
     it('adds calendar months the way a monthly subscription renews', () => {

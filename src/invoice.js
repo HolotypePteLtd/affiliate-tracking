@@ -52,6 +52,13 @@ export async function invoicePaymentIntent(invoice, env) {
         if (id) return id;
     }
     if (!invoice?.id || !env.STRIPE_SECRET_KEY) return null;
+    // Only the id is known (a Checkout session's invoice): read the invoice,
+    // which carries payment_intent on API versions before 2025-03-31.basil.
+    if (invoice.object !== 'invoice') {
+        const full = await stripeRequest(env, `invoices/${encodeURIComponent(invoice.id)}`);
+        const id = stripeId(full?.payment_intent);
+        if (id) return id;
+    }
     const payments = await stripeRequest(env, `invoice_payments?invoice=${encodeURIComponent(invoice.id)}&limit=10`);
     for (const row of payments?.data || []) {
         const id = stripeId(row?.payment?.payment_intent);

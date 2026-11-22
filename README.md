@@ -389,6 +389,19 @@ pnpm test        # Node.js 22.13+, local SQLite, no network/Stripe/D1 services
 pnpm test:watch  # re-run on file changes
 ```
 
+End-to-end tests run against Stripe's real test mode and are not part of
+`pnpm test`. They need a test-mode secret key in your shell (never a live key;
+the tests refuse one) and clean up what they create:
+
+```bash
+STRIPE_TEST_SECRET_KEY=sk_test_… pnpm test:e2e
+```
+
+- `e2e/recurring-commissions.e2e.js`: a real monthly subscription on a Stripe
+  test clock renews 13 times; checks 12 months of commission, no double
+  recording, and that a real refund cancels only its own renewal. Takes a few
+  minutes, because Stripe processes each clock step.
+
 Covers: token sign/verify with purpose scoping, tamper rejection, admin gate,
 constant-time comparison, HTML escaping, cookie headers, applications,
 approval retries, referral failures, and payout failures, concurrency,
