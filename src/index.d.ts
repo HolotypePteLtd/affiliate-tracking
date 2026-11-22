@@ -26,6 +26,8 @@ export interface AffiliateEnv {
     AFFILIATE_IP_SALT?: string;
     AFFILIATE_DEV_MODE?: string;
     AFFILIATE_TERMS_VERSION?: string;
+    /** Smallest amount owed (minor units) that is paid out; less waits for a later run. */
+    AFFILIATE_MIN_PAYOUT_CENTS?: string;
     AFFILIATE_PUBLIC_LIMITER?: {
         limit(options: { key: string }): Promise<{ success: boolean }>;
     };

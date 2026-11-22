@@ -4,6 +4,7 @@
 import { currencyCode } from './money.js';
 import { resolvePaidAttribution } from './promotion.js';
 import { stripeId, stripeRequest } from './stripe.js';
+import { computeCommission } from './rules.js';
 
 export async function recordConversion(session, event, env, lineItems = session?.line_items?.data || []) {
     if (!session) return null;
@@ -31,15 +32,12 @@ export async function recordConversion(session, event, env, lineItems = session?
     if (!affiliateId) return;
 
     const aff = await env.DB.prepare(
-        'SELECT commission_pct, status FROM affiliates WHERE id=?1'
+        'SELECT id, commission_pct, status FROM affiliates WHERE id=?1'
     ).bind(affiliateId).first();
     if (!aff) throw new Error('Attributed affiliate not found');
     if (!recorded && aff.status !== 'active') return null;
 
     const amountTotal = Number.isFinite(session.amount_total) ? session.amount_total : 0;
-    const commission = Math.round(
-        amountTotal * aff.commission_pct / 100
-    );
     const country = session.customer_details?.address?.country;
     const itemsList = Array.isArray(lineItems) ? lineItems : [];
     const items = itemsList.map(item => {
@@ -51,15 +49,25 @@ export async function recordConversion(session, event, env, lineItems = session?
             quantity: item.quantity || 1,
         };
     });
+    const createdAt = Number.isFinite(event?.created) ? event.created * 1000 : Date.now();
+    const currency = currencyCode(session.currency);
+    const { commission, pct, detail } = await computeCommission(env, {
+        affiliate: aff, amountCents: amountTotal, currency, customerEmail: session.customer_details?.email,
+        at: createdAt,
+        items: itemsList.map((item, i) => ({
+            product_id: items[i].product_id, price_id: stripeId(item.price),
+            quantity: items[i].quantity, amount_cents: item.amount_total,
+        })),
+    });
     const paymentIntent = stripeId(session.payment_intent);
     await env.DB.prepare(`
         INSERT INTO conversions
           (affiliate_id, stripe_session_id, stripe_event_id, payment_intent,
            customer_email, amount_cents, commission_cents, status, created_at,
-           currency, customer_country, commission_pct, items_json)
+           currency, customer_country, commission_pct, items_json, commission_detail)
         VALUES (?1,?2,?3,?4,?5,?6,?7,
                 CASE WHEN EXISTS (SELECT 1 FROM refunded_payments WHERE payment_intent=?4)
-                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12)
+                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12,?13)
         ON CONFLICT(stripe_session_id) DO UPDATE SET
           payment_intent=COALESCE(conversions.payment_intent, excluded.payment_intent),
           status=CASE WHEN excluded.status='refunded' AND conversions.status IN ('pending','approved','paying')
@@ -76,11 +84,12 @@ export async function recordConversion(session, event, env, lineItems = session?
         session.customer_details?.email || null,
         amountTotal,
         commission,
-        Number.isFinite(event?.created) ? event.created * 1000 : Date.now(),
-        currencyCode(session.currency),
+        createdAt,
+        currency,
         typeof country === 'string' && /^[a-z]{2}$/i.test(country) ? country.toUpperCase() : null,
-        aff.commission_pct,
-        JSON.stringify(items)
+        pct,
+        JSON.stringify(items),
+        detail ? JSON.stringify(detail) : null
     ).run();
     return session;
 }

@@ -33,14 +33,19 @@ export async function onRequestPost(context) {
     if (unsupported) {
         return Response.json({ ok: false, error: 'Non-USD or unknown-currency commissions require reconciliation before USD payouts' }, { status: 409 });
     }
+    // AFFILIATE_MIN_PAYOUT_CENTS: affiliates owed less wait for a later run.
+    const minimum = Number(env.AFFILIATE_MIN_PAYOUT_CENTS || 0);
+    if (!Number.isSafeInteger(minimum) || minimum < 0) {
+        return Response.json({ ok: false, error: 'AFFILIATE_MIN_PAYOUT_CENTS must be a whole number' }, { status: 500 });
+    }
     const affiliates = (await db.prepare(`
         SELECT a.id FROM affiliates a
         WHERE (?1 IS NULL OR a.id=?1) AND (
-            EXISTS (SELECT 1 FROM conversions c WHERE c.affiliate_id=a.id
-                    AND c.status='approved' AND c.payout_id IS NULL)
+            (SELECT COALESCE(SUM(c.commission_cents),0) FROM conversions c WHERE c.affiliate_id=a.id
+                    AND c.status='approved' AND c.payout_id IS NULL) >= MAX(?2, 1)
             OR EXISTS (SELECT 1 FROM payouts p WHERE p.affiliate_id=a.id AND p.status='pending')
         )
-    `).bind(affiliateId || null).all()).results || [];
+    `).bind(affiliateId || null, minimum).all()).results || [];
     if (!affiliates.length) {
         return Response.json({ ok: false, error: 'No approved conversions found' }, { status: 404 });
     }

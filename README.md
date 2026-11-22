@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0012_commission_rules.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -275,6 +276,49 @@ payout run claims the remaining approved commissions under a fresh key.
 For a verified legacy transfer without attached conversions, pass the
 original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
 
+### Commission rules, bonuses and minimum payout
+
+Without rules every affiliate earns their `commission_pct` on the whole order,
+as before. Rules let you pay differently by affiliate, product and volume:
+
+```bash
+# 40% on the annual plan for everyone
+curl -X POST https://yoursite.com/api/admin/commission-rules -H "x-admin-token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"kind":"percent","percent":40,"product_id":"prod_annual"}'
+
+# Nick: 20%, and 30% once he has 10 sales this month
+... -d '{"kind":"percent","percent":20,"affiliate_id":1}'
+... -d '{"kind":"percent","percent":30,"affiliate_id":1,"min_monthly_sales":10}'
+
+# $15 per seat sold, at most $300 per customer
+... -d '{"kind":"fixed","fixed_cents":1500,"currency":"usd","product_id":"prod_seat","cap_per_customer_cents":30000}'
+```
+
+For each item in an order the most specific active rule wins: this affiliate
+and this product, then this product, then this affiliate, then a rule for
+everyone, then the affiliate's `commission_pct`. Among equally specific rules
+the highest tier the affiliate has reached this calendar month (UTC) applies.
+`product_id` takes a Stripe `prod_…` or `price_…` id and needs the purchased
+line items with their amounts (pass them to `recordConversion`, or expand
+`line_items` on the session); without them only rules with no product apply.
+Percent rules pay a share of what the item sold for after discounts; fixed
+rules pay per unit, only for sales in their currency. Caps count everything
+one customer (by email) has earned the affiliate under that rule.
+
+Each conversion stores the rules it used in `commission_detail`, so
+`GET /api/admin/commission-rules` and `POST /api/admin/commission-rule-archive {"id":…}`
+can change the rules without changing anything already earned.
+
+One-off bonuses are approved lines paid with the next payout:
+
+```bash
+curl -X POST https://yoursite.com/api/admin/bonus -H "x-admin-token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"affiliate_id":1,"amount_cents":5000,"currency":"usd","note":"Launch week"}'
+```
+
+Set `AFFILIATE_MIN_PAYOUT_CENTS` (e.g. `"5000"`) to hold back affiliates who are
+owed less; their commissions roll over to a later run.
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -311,6 +355,9 @@ context to the helpers directly.
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
 | `src/webhook.js` | Conversion, refund, and dispute recording |
+| `src/rules.js` | Commission rules |
+| `functions/api/admin/commission-rules.js` | Create, list and archive commission rules |
+| `functions/api/admin/bonus.js` | One-off bonus lines |
 | `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
 | `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
 | `functions/api/_email.js` | Transactional email (Brevo default, configurable) |
@@ -348,6 +395,7 @@ routes itself — see `src/route.js` for the exact paths.
 | `ADMIN_TOKEN` | `wrangler secret put` | Admin API gate |
 | `AFFILIATE_REF_COOKIE` | optional | Attribution cookie name (default `affiliate_ref`) |
 | `AFFILIATE_IP_SALT` | optional | IP hash salt |
+| `AFFILIATE_MIN_PAYOUT_CENTS` | optional | Smallest amount owed that is paid out; less rolls over |
 
 ## Tests
 

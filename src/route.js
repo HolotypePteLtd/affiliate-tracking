@@ -17,6 +17,8 @@ import { onRequestPost as adminAffiliateStatus } from '../functions/api/admin/af
 import { onRequestPost as adminAffiliateRevokeSessions } from '../functions/api/admin/affiliate-revoke-sessions.js';
 import { onRequestGet as adminConversionsGet } from '../functions/api/admin/conversions.js';
 import { onRequestPost as adminConversionApprove } from '../functions/api/admin/conversion-approve.js';
+import { onRequestGet as adminRulesGet, onRequestPost as adminRulesPost, onArchivePost as adminRuleArchive } from '../functions/api/admin/commission-rules.js';
+import { onRequestPost as adminBonus } from '../functions/api/admin/bonus.js';
 import { onRequestPost as adminPayoutsRun } from '../functions/api/admin/payouts-run.js';
 import { onRequestPost as adminPayoutsReconcile } from '../functions/api/admin/payouts-reconcile.js';
 import { onRequestGet as adminPayoutsGet } from '../functions/api/admin/payouts.js';
@@ -47,6 +49,10 @@ export const affiliateRoutes = [
     ['POST', '/api/admin/affiliate-revoke-sessions', adminAffiliateRevokeSessions],
     ['GET', '/api/admin/conversions', adminConversionsGet],
     ['POST', '/api/admin/conversion-approve', adminConversionApprove],
+    ['GET', '/api/admin/commission-rules', adminRulesGet],
+    ['POST', '/api/admin/commission-rules', adminRulesPost],
+    ['POST', '/api/admin/commission-rule-archive', adminRuleArchive],
+    ['POST', '/api/admin/bonus', adminBonus],
     ['POST', '/api/admin/payouts-run', adminPayoutsRun],
     ['POST', '/api/admin/payouts-reconcile', adminPayoutsReconcile],
     ['GET', '/api/admin/payouts', adminPayoutsGet],
