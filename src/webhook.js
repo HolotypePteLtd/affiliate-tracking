@@ -4,6 +4,7 @@
 import { currencyCode } from './money.js';
 import { resolvePaidAttribution } from './promotion.js';
 import { stripeId, stripeRequest } from './stripe.js';
+import { invoicePaymentIntent } from './invoice.js';
 
 export async function recordConversion(session, event, env, lineItems = session?.line_items?.data || []) {
     if (!session) return null;
@@ -51,21 +52,29 @@ export async function recordConversion(session, event, env, lineItems = session?
             quantity: item.quantity || 1,
         };
     });
-    const paymentIntent = stripeId(session.payment_intent);
+    // A subscription Checkout has no payment intent of its own; its first
+    // invoice's payment is the one a refund or dispute will name.
+    const invoiceId = stripeId(session.invoice);
+    const paymentIntent = stripeId(session.payment_intent) ||
+        (invoiceId && env.STRIPE_SECRET_KEY ? await invoicePaymentIntent({ id: invoiceId }, env) : null);
     await env.DB.prepare(`
         INSERT INTO conversions
           (affiliate_id, stripe_session_id, stripe_event_id, payment_intent,
            customer_email, amount_cents, commission_cents, status, created_at,
-           currency, customer_country, commission_pct, items_json)
+           currency, customer_country, commission_pct, items_json,
+           stripe_customer_id, stripe_subscription_id, stripe_invoice_id)
         VALUES (?1,?2,?3,?4,?5,?6,?7,
                 CASE WHEN EXISTS (SELECT 1 FROM refunded_payments WHERE payment_intent=?4)
-                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12)
+                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12,?13,?14,?15)
         ON CONFLICT(stripe_session_id) DO UPDATE SET
           payment_intent=COALESCE(conversions.payment_intent, excluded.payment_intent),
           status=CASE WHEN excluded.status='refunded' AND conversions.status IN ('pending','approved','paying')
                          AND (conversions.payment_intent IS NULL OR conversions.payment_intent=excluded.payment_intent)
                       THEN 'refunded' ELSE conversions.status END,
           currency=COALESCE(conversions.currency, excluded.currency),
+          stripe_customer_id=COALESCE(conversions.stripe_customer_id, excluded.stripe_customer_id),
+          stripe_subscription_id=COALESCE(conversions.stripe_subscription_id, excluded.stripe_subscription_id),
+          stripe_invoice_id=COALESCE(conversions.stripe_invoice_id, excluded.stripe_invoice_id),
           customer_country=COALESCE(conversions.customer_country, excluded.customer_country),
           items_json=CASE WHEN conversions.items_json='[]' THEN excluded.items_json ELSE conversions.items_json END
     `).bind(
@@ -80,7 +89,10 @@ export async function recordConversion(session, event, env, lineItems = session?
         currencyCode(session.currency),
         typeof country === 'string' && /^[a-z]{2}$/i.test(country) ? country.toUpperCase() : null,
         aff.commission_pct,
-        JSON.stringify(items)
+        JSON.stringify(items),
+        stripeId(session.customer),
+        stripeId(session.subscription),
+        invoiceId
     ).run();
     return session;
 }

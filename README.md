@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0010_renewals.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -180,6 +181,36 @@ that checkout is recorded. Already paid commissions retain their payout
 history. If a transfer may have been sent already, reconcile the batch in
 the admin dashboard.
 
+### 6 · Recurring commissions (`recordInvoicePayment`)
+
+For subscriptions, subscribe your webhook to `invoice.paid` too and await the
+helper in that verified branch:
+
+```js
+import { recordInvoicePayment } from "cf-affiliate";
+
+if (event.type === "invoice.paid") {
+    await recordInvoicePayment(event.data.object, event, env);
+}
+```
+
+Each renewal pays the affiliate who got the subscription's first sale (the
+Checkout conversion), at that affiliate's commission rate, until 12 months
+after the first sale. Change the default with `AFFILIATE_RECURRING_MONTHS`
+(`0` = first payment only), or per affiliate with `affiliates.recurring_months`.
+
+- The subscription's first invoice (`billing_reason=subscription_create`) is
+  skipped: its Checkout session is already the sale.
+- Idempotent by invoice id; renewals are conversions with `kind='renewal'`
+  and go through approval, the hold period and payouts like any other.
+- Refunds and disputes of one renewal cancel only that renewal (`recordRefund`
+  as before), including a refund that arrives before its `invoice.paid`.
+- Subscription Checkout sessions have no payment intent of their own, so
+  `recordConversion` now looks up the first invoice's payment (when
+  `STRIPE_SECRET_KEY` is set), so refunds of the first month match too.
+- Both Stripe API shapes are read: `invoice.subscription` / `payment_intent`,
+  and from 2025-03-31.basil `parent.subscription_details` / `invoice_payments`.
+
 ---
 
 ## Referral cookies and attribution
@@ -311,6 +342,7 @@ context to the helpers directly.
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
 | `src/webhook.js` | Conversion, refund, and dispute recording |
+| `src/invoice.js` | Renewal commissions (`recordInvoicePayment`) |
 | `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
 | `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
 | `functions/api/_email.js` | Transactional email (Brevo default, configurable) |
@@ -348,6 +380,7 @@ routes itself — see `src/route.js` for the exact paths.
 | `ADMIN_TOKEN` | `wrangler secret put` | Admin API gate |
 | `AFFILIATE_REF_COOKIE` | optional | Attribution cookie name (default `affiliate_ref`) |
 | `AFFILIATE_IP_SALT` | optional | IP hash salt |
+| `AFFILIATE_RECURRING_MONTHS` | optional | Months after the first sale that renewals earn commission (default 12, `0` = first payment only) |
 
 ## Tests
 

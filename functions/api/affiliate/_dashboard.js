@@ -59,7 +59,7 @@ export function reference(kind, id) {
     return kind + '-' + String(id).padStart(6, '0');
 }
 
-export const CONVERSION_COLUMNS = 'id, status, amount_cents, commission_cents, currency, customer_country, commission_pct, items_json, created_at, approved_at, paid_at, payout_id';
+export const CONVERSION_COLUMNS = 'id, status, kind, amount_cents, commission_cents, currency, customer_country, commission_pct, items_json, created_at, approved_at, paid_at, payout_id';
 
 export function publicConversion(row) {
     // Whitelist fields; customer email/address and Stripe identifiers stay private.
@@ -69,7 +69,7 @@ export function publicConversion(row) {
     }));
     const currency = currencyCode(row.currency);
     return {
-        reference: reference('AF', row.id), status: row.status,
+        reference: reference('AF', row.id), status: row.status, kind: row.kind || 'checkout',
         amount_cents: row.amount_cents, commission_cents: row.commission_cents,
         currency, currency_decimals: currencyDecimals(currency),
         country: row.customer_country || null, commission_pct: row.commission_pct ?? null,
