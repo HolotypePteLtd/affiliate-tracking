@@ -374,6 +374,18 @@ pnpm test        # Node.js 22.13+, local SQLite, no network/Stripe/D1 services
 pnpm test:watch  # re-run on file changes
 ```
 
+End-to-end tests run against Stripe's real test mode and are not part of
+`pnpm test`. They need a test-mode secret key in your shell (never a live key;
+the tests refuse one) and clean up what they create:
+
+```bash
+STRIPE_TEST_SECRET_KEY=sk_test_… pnpm test:e2e
+```
+
+- `e2e/payout-currency.e2e.js`: a real card payment in a foreign currency
+  settles into the platform balance; a payout run converts the commission at
+  the rate on that balance transaction and records `fx_source`.
+
 Covers: token sign/verify with purpose scoping, tamper rejection, admin gate,
 constant-time comparison, HTML escaping, cookie headers, applications,
 approval retries, referral failures, and payout failures, concurrency,

@@ -20,7 +20,8 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "vitest run --config e2e/vitest.config.js"
   },
   "devDependencies": {
     "vitest": "^4.1.11"
