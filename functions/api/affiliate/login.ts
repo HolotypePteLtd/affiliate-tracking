@@ -19,8 +19,10 @@ import {
     createSession,
     sessionCookieHeader,
 } from '../_affiliate-auth.ts';
+import type { AffiliateRouteContext, AffiliatesRow } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     const body = await readPublicBody(context.request);
     const email = typeof body?.email === 'string' ? body.email.trim() : '';
     if (!email || !email.includes('@') || email.length > 254) {
@@ -48,7 +50,7 @@ export async function onRequestPost(context) {
         "SELECT id, session_version FROM affiliates WHERE email=?1 AND status='active'"
     )
         .bind(normalizedEmail)
-        .first();
+        .first<Pick<AffiliatesRow, 'id' | 'session_version'>>();
 
     if (aff) {
         const token = await createMagicLink(aff.id, env.AFFILIATE_SESSION_SECRET, aff.session_version);
@@ -69,15 +71,15 @@ export async function onRequestPost(context) {
             `,
             }, env);
             if (!response.ok) console.error('Affiliate login email failed:', response.status);
-        } catch (err) {
-            console.error('Affiliate login email failed:', err.message);
+        } catch (err: unknown) {
+            console.error('Affiliate login email failed:', errorMessage(err));
         }
     }
 
     return Response.json({ success: true });
 }
 
-export async function onRequestGet(context) {
+export async function onRequestGet(context: AffiliateRouteContext) {
     const env = context.env;
     const url = new URL(context.request.url);
     const origin = url.origin;

@@ -9,7 +9,7 @@ const encoder = new TextEncoder();
  * @param {string} secret
  * @returns {Promise<CryptoKey>}
  */
-export async function importHmacKey(secret) {
+export async function importHmacKey(secret: string) {
     return crypto.subtle.importKey(
         'raw',
         encoder.encode(secret),
@@ -25,7 +25,7 @@ export async function importHmacKey(secret) {
  * @param {string} message
  * @returns {Promise<string>}
  */
-export async function hmacHex(key, message) {
+export async function hmacHex(key: CryptoKey, message: string) {
     const mac = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
     return hexEncode(mac);
 }
@@ -35,7 +35,7 @@ export async function hmacHex(key, message) {
  * @param {ArrayBuffer | ArrayBufferView} buffer
  * @returns {string}
  */
-export function hexEncode(buffer) {
+export function hexEncode(buffer: ArrayBuffer) {
     const bytes = new Uint8Array(buffer);
     return Array.from(bytes)
         .map((b) => b.toString(16).padStart(2, '0'))
@@ -48,7 +48,7 @@ export function hexEncode(buffer) {
  * @param {string} b
  * @returns {boolean}
  */
-export function constantTimeCompare(a, b) {
+export function constantTimeCompare(a: string, b: string): boolean {
     if (a.length !== b.length) {
         return false;
     }

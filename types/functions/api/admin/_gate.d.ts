@@ -1,1 +1,2 @@
-export declare function requireAdmin(env: any, request: any): Promise<Response | null>;
+import type { AffiliateEnv } from '../../../src/types.ts';
+export declare function requireAdmin(env: AffiliateEnv, request: Request): Promise<Response | null>;

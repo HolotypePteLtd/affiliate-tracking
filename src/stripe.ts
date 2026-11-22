@@ -1,4 +1,4 @@
-import type { AffiliateEnv } from './types.ts';
+import type { AffiliateEnv, StripeObject } from './types.ts';
 
 export interface StripeError extends Error {
     code?: string;
@@ -6,9 +6,8 @@ export interface StripeError extends Error {
 }
 
 // Stripe's JSON responses are read field by field where they're used.
-export async function stripeRequest(
-    env: AffiliateEnv, path: string, { form, idempotencyKey }: { form?: Record<string, string>; idempotencyKey?: string } = {},
-): Promise<any> {
+export async function stripeRequest(env: AffiliateEnv, path: string, { form, idempotencyKey }: { form?: Record<string, string>; idempotencyKey?: string } = {},
+): Promise<StripeObject> {
     if (!env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY not configured');
     const headers: Record<string, string> = { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` };
     if (form) headers['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -19,7 +18,7 @@ export async function stripeRequest(
         body: form ? new URLSearchParams(form) : undefined,
         signal: AbortSignal.timeout(10000),
     });
-    const data: any = await response.json();
+    const data: StripeObject = await response.json();
     if (!response.ok || data.error) {
         const error: StripeError = new Error(data.error?.message || `Stripe request failed (${response.status})`);
         error.code = data.error?.code;
@@ -34,7 +33,7 @@ export function stripeId(value: unknown): string | null {
     return typeof id === 'string' && id ? id : null;
 }
 
-export async function createOnboardingLink(request, env, account) {
+export async function createOnboardingLink(request: Request, env: AffiliateEnv, account: string) {
     const origin = new URL(request.url).origin;
     const link = await stripeRequest(env, 'account_links', { form: {
         account,

@@ -1,3 +1,2 @@
-export declare function onRequestPost({ request }: {
-    request: any;
-}): Promise<Response>;
+import type { AffiliateRouteContext } from '../../../src/types.ts';
+export declare function onRequestPost({ request }: AffiliateRouteContext): Promise<Response>;

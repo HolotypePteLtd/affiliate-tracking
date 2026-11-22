@@ -1,5 +1,6 @@
+import type { AffiliateEnv, JsonObject } from '../../src/types.ts';
 // Bound public payloads before parsing and limit both client IP and recipient.
-export async function readPublicBody(request) {
+export async function readPublicBody(request: Request) {
     const reader = request.body?.getReader();
     if (!reader) return null;
     const chunks: Uint8Array[] = [];
@@ -23,7 +24,7 @@ export async function readPublicBody(request) {
     } catch { return null; }
 }
 
-export async function limitPublicRequest(request, env, email = null) {
+export async function limitPublicRequest(request: Request, env: AffiliateEnv, email = null) {
     if (!env.AFFILIATE_PUBLIC_LIMITER) {
         return Response.json({ success: false, error: 'Affiliate requests are not configured' }, { status: 503 });
     }
@@ -47,7 +48,7 @@ export async function limitPublicRequest(request, env, email = null) {
     }
 }
 
-export async function readJsonObject(request) {
-    const body = await request.json().catch(() => null);
-    return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+export async function readJsonObject(request: Request): Promise<JsonObject> {
+    const body: unknown = await request.json().catch(() => null);
+    return body && typeof body === 'object' && !Array.isArray(body) ? body as JsonObject : {};
 }

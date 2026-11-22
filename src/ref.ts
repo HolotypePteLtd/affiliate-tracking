@@ -13,7 +13,8 @@
 // HTTPS and AFFILIATE_REF_LEGACY_COOKIE for a read-only migration fallback.
 // Resolved per-call since env differs per environment.
 import { hostCookieName } from './cookie.ts';
-import type { AffiliateEnv, AffiliateExecutionContext } from './types.ts';
+import type { AffiliateEnv, AffiliateExecutionContext, AffiliatesRow } from './types.ts';
+import { errorMessage } from './errors.ts';
 
 export const DEFAULT_REF_COOKIE = 'affiliate_ref' as const;
 const REF_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -42,7 +43,7 @@ export function readAffiliateRef(request: Request, env: AffiliateEnv): string | 
     return null;
 }
 
-function referralCookie(header, name) {
+function referralCookie(header: string | null, name: string) {
     const cookie = { present: false, invalid: false, values: new Set<string>() };
     for (const part of (header || '').split(';')) {
         const idx = part.indexOf('=');
@@ -57,21 +58,20 @@ function referralCookie(header, name) {
     return cookie;
 }
 
-export async function applyAffiliateRef(
-    request: Request, env: AffiliateEnv, respond: () => Response | Promise<Response>, ctx?: AffiliateExecutionContext,
+export async function applyAffiliateRef(request: Request, env: AffiliateEnv, respond: () => Response | Promise<Response>, ctx?: AffiliateExecutionContext,
 ): Promise<Response | null> {
     if (!env.DB || typeof respond !== 'function' || request.method !== 'GET') return null;
     const code = new URL(request.url).searchParams.get('ref');
     if (!code) return null;
     const cookieName = refCookieName(env, request);
 
-    let aff;
+    let aff: Pick<AffiliatesRow, 'id' | 'code'> | null;
     try {
         aff = await env.DB.prepare(
             "SELECT id, code FROM affiliates WHERE code=?1 AND status='active'"
-        ).bind(code).first();
-    } catch (err) {
-        console.error('Affiliate referral lookup failed:', err.message);
+        ).bind(code).first<Pick<AffiliatesRow, 'id' | 'code'>>();
+    } catch (err: unknown) {
+        console.error('Affiliate referral lookup failed:', errorMessage(err));
         return null;
     }
     if (!aff) return null;
@@ -80,7 +80,7 @@ export async function applyAffiliateRef(
     // reloads, multi-page browsing) is not a second click.
     const existing = readAffiliateRef(request, env);
     if (existing !== aff.code) {
-        const click = recordClick(request, env, aff.id);
+        const click = recordClick(request, { ...env, DB: env.DB }, aff.id);
         if (ctx?.waitUntil) ctx.waitUntil(click);
         else await click;
     }
@@ -88,8 +88,8 @@ export async function applyAffiliateRef(
     let assetRes;
     try {
         assetRes = await respond();
-    } catch (err) {
-        console.error('Affiliate asset fetch failed:', err.message);
+    } catch (err: unknown) {
+        console.error('Affiliate asset fetch failed:', errorMessage(err));
         return null;
     }
     if (!(assetRes instanceof Response)) return null;
@@ -109,18 +109,18 @@ export async function applyAffiliateRef(
     return new Response(assetRes.body, { status: assetRes.status, headers });
 }
 
-async function recordClick(request, env, affiliateId) {
+async function recordClick(request: Request, env: AffiliateEnv & { DB: D1Database }, affiliateId: number) {
     try {
         const ipHash = await hashIp(request.headers.get('cf-connecting-ip'), env.AFFILIATE_IP_SALT);
         await env.DB.prepare(
             'INSERT INTO clicks (affiliate_id, ip_hash, created_at) VALUES (?1,?2,?3)'
         ).bind(affiliateId, ipHash, Date.now()).run();
-    } catch (err) {
-        console.error('Affiliate click insert failed:', err.message);
+    } catch (err: unknown) {
+        console.error('Affiliate click insert failed:', errorMessage(err));
     }
 }
 
-async function hashIp(ip, salt) {
+async function hashIp(ip: string | null, salt: string | undefined) {
     if (!ip) return null;
     const data = new TextEncoder().encode(ip + (salt || ''));
     const buf = await crypto.subtle.digest('SHA-256', data);

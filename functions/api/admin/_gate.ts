@@ -3,8 +3,9 @@
 
 import { constantTimeCompare } from '../_crypto-utils.ts';
 import { readAdminSession, isSameOrigin } from '../_admin-auth.ts';
+import type { AffiliateEnv } from '../../../src/types.ts';
 
-export async function requireAdmin(env, request) {
+export async function requireAdmin(env: AffiliateEnv, request: Request) {
     if (!env.ADMIN_TOKEN) {
         return Response.json({ ok: false, error: 'Admin access is not configured' }, { status: 503 });
     }

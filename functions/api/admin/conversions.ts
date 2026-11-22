@@ -3,8 +3,9 @@
 //     alongside each row.
 
 import { requireAdmin } from './_gate.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
 
-export async function onRequestGet(context) {
+export async function onRequestGet(context: AffiliateRouteContext) {
     const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 

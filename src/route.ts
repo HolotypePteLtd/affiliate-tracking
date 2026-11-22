@@ -53,9 +53,7 @@ export const affiliateRoutes: AffiliateRoute[] = [
     ['GET', '/api/admin/payouts', adminPayoutsGet],
 ];
 
-export async function handleAffiliateApi(
-    request: Request, env: AffiliateEnv, ctx?: AffiliateExecutionContext,
-): Promise<Response | null> {
+export async function handleAffiliateApi(request: Request, env: AffiliateEnv, ctx?: AffiliateExecutionContext, ): Promise<Response | null> {
     const pathname = new URL(request.url).pathname;
     for (const [method, path, handler] of affiliateRoutes) {
         if (method === request.method && path === pathname) {

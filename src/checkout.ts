@@ -15,12 +15,11 @@
 import { readAffiliateRef } from './ref.ts';
 import type { AffiliateEnv, AffiliatesRow } from './types.ts';
 import { findPromotionCode, affiliateForPromotion, PromotionCodeError } from './promotion.ts';
+import { errorMessage } from './errors.ts';
 
 type CheckoutAffiliate = Pick<AffiliatesRow, 'id' | 'code' | 'promo_code_id'>;
 
-export async function attachAffiliateAttribution(
-    params: URLSearchParams, request: Request, env: AffiliateEnv, { promoCode }: { promoCode?: string } = {},
-): Promise<void> {
+export async function attachAffiliateAttribution(params: URLSearchParams, request: Request, env: AffiliateEnv, { promoCode }: { promoCode?: string } = {}, ): Promise<void> {
     if (!(params instanceof URLSearchParams)) return;
     if (promoCode !== undefined && (typeof promoCode !== 'string' || promoCode.length > 256)) {
         throw new PromotionCodeError('Invalid promo code.');
@@ -35,8 +34,8 @@ export async function attachAffiliateAttribution(
             cookieAffiliate = await env.DB.prepare(
                 "SELECT id, code, promo_code_id FROM affiliates WHERE code=?1 AND status='active'"
             ).bind(refCode).first<CheckoutAffiliate>();
-        } catch (err) {
-            console.error('Affiliate lookup failed during checkout:', err.message);
+        } catch (err: unknown) {
+            console.error('Affiliate lookup failed during checkout:', errorMessage(err));
             if (!promotion) return;
             throw new PromotionCodeError('Promotion codes are temporarily unavailable.', 503, 'promo_code_unavailable');
         }

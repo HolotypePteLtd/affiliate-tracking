@@ -2,6 +2,7 @@
 // need a particular site generator or frontend framework.
 import type { AdminDashboardAppearance, AffiliateRouteContext } from './types.ts';
 import { escapeHtml } from '../functions/api/_email.ts';
+import { errorMessage } from './errors.ts';
 
 const html = String.raw`<!doctype html>
 <html lang="en">
@@ -167,20 +168,20 @@ __STYLESHEETS__
     const formButtons = [$('create-form').querySelector('button'), $('refresh'), $('show-create')];
     formButtons.forEach(button => button.disabled = true);
     try { const message = await handler(); if (message) { await load(); feedback(message); } }
-    catch (error) { if (error.status === 401) signedOut(); feedback(error.message, true); }
+    catch (error: unknown) { if (error.status === 401) signedOut(); feedback(errorMessage(error), true); }
     finally { busy = false; formButtons.forEach(button => button.disabled = false); render(); }
   }
   async function signIn(path, body) {
     $('login-error').textContent = '';
     const buttons = $('login').querySelectorAll('button'); buttons.forEach(button => button.disabled = true);
     try { await api(path, body); $('admin-token').value = ''; await load(); }
-    catch (error) { $('login-error').textContent = error.message; }
+    catch (error: unknown) { $('login-error').textContent = errorMessage(error); }
     finally { buttons.forEach(button => button.disabled = false); }
   }
   $('login-form').addEventListener('submit', event => { event.preventDefault(); signIn('/api/admin/login', { token: $('admin-token').value }); });
   $('demo-admin').addEventListener('click', () => signIn('/api/admin/dev-login', {}));
-  $('demo-affiliate').addEventListener('click', async () => { try { await api('/api/affiliate/dev-login', {}); window.location.href = '/affiliates/dashboard/'; } catch (error) { $('login-error').textContent = error.message; } });
-  $('sign-out').addEventListener('click', async () => { try { await api('/api/admin/logout', {}); signedOut(); } catch (error) { feedback(error.message, true); } });
+  $('demo-affiliate').addEventListener('click', async () => { try { await api('/api/affiliate/dev-login', {}); window.location.href = '/affiliates/dashboard/'; } catch (error: unknown) { $('login-error').textContent = errorMessage(error); } });
+  $('sign-out').addEventListener('click', async () => { try { await api('/api/admin/logout', {}); signedOut(); } catch (error: unknown) { feedback(errorMessage(error), true); } });
   $('refresh').addEventListener('click', () => mutate(async () => 'Data refreshed.'));
   $('partner-filter').addEventListener('change', render); $('conversion-filter').addEventListener('change', render);
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
@@ -201,7 +202,7 @@ __STYLESHEETS__
   async function start() {
     try { const dev = await api('/api/affiliate/dev'); localDemo = dev.enabled === true; } catch {}
     $('local-login').hidden = !localDemo; $('demo-notice').hidden = !localDemo;
-    try { await load(); } catch (error) { signedOut(); if (error.status !== 401) $('login-error').textContent = error.message; }
+    try { await load(); } catch (error: unknown) { signedOut(); if (error.status !== 401) $('login-error').textContent = errorMessage(error); }
   }
   start();
 })();
@@ -210,9 +211,7 @@ __STYLESHEETS__
 
 // Hosts can supply branding and styles without copying the admin UI or its
 // session logic. Asset URLs and font origins come from trusted host config.
-export function adminDashboard(
-    context: Partial<AffiliateRouteContext> = {}, appearance: AdminDashboardAppearance = {},
-): Response {
+export function adminDashboard(context: Partial<AffiliateRouteContext> = {}, appearance: AdminDashboardAppearance = {}, ): Response {
     const nonce = crypto.randomUUID();
     const brandName = appearance.brandName || 'Affiliate program / Admin';
     const brand = appearance.logoUrl

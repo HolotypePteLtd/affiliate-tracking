@@ -13,11 +13,13 @@
 
 import { notifyAdmin, escapeHtml } from '../_email.ts';
 import { readPublicBody, limitPublicRequest } from '../_public.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
 // Reject unreasonably long free-text before it reaches the DB or an email.
 const MAX_MESSAGE_LENGTH = 2000;
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     const body = await readPublicBody(context.request);
     if (!body) {
         return Response.json({ success: false, error: 'Invalid request body' }, { status: 400 });
@@ -78,13 +80,13 @@ export async function onRequestPost(context) {
                 if (!result.meta?.changes) return Response.json({ success: true });
                 inserted = true;
                 break;
-            } catch (err) {
-                if (!err.message?.includes('UNIQUE') || attempt === 4) throw err;
+            } catch (err: unknown) {
+                if (!errorMessage(err)?.includes('UNIQUE') || attempt === 4) throw err;
             }
         }
         if (!inserted) throw new Error('Could not allocate a referral code');
-    } catch (err) {
-        console.error('Affiliate application insert failed:', err.message);
+    } catch (err: unknown) {
+        console.error('Affiliate application insert failed:', errorMessage(err));
         return Response.json(
             { success: false, error: 'Could not submit application' },
             { status: 500 }
@@ -108,6 +110,6 @@ export async function onRequestPost(context) {
     return Response.json({ success: true });
 }
 
-function slugFromEmail(email) {
+function slugFromEmail(email: string) {
     return email.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'affiliate';
 }

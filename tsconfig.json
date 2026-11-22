@@ -6,8 +6,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true,
-    "noImplicitAny": false,
-    "useUnknownInCatchVariables": false,
     "skipLibCheck": true,
     "lib": ["es2023"],
     "types": ["@cloudflare/workers-types"]

@@ -2,8 +2,10 @@ import { requireAdmin } from './_gate.ts';
 import { readJsonObject } from '../_public.ts';
 import { stripeRequest } from '../../../src/stripe.ts';
 import { isLocalAffiliateDev } from '../../../src/dev.ts';
+import type { AffiliateRouteContext, AffiliatesRow } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env }: AffiliateRouteContext) {
     const gate = await requireAdmin(env, request);
     if (gate) return gate;
     const db = env.DB;
@@ -13,7 +15,7 @@ export async function onRequestPost({ request, env }) {
         return Response.json({ ok: false, error: 'An affiliate id and active or suspended status are required' }, { status: 400 });
     }
 
-    const affiliate = await db.prepare('SELECT status, source, promo_code_id FROM affiliates WHERE id=?1').bind(id).first();
+    const affiliate = await db.prepare('SELECT status, source, promo_code_id FROM affiliates WHERE id=?1').bind(id).first<Pick<AffiliatesRow, 'status' | 'source' | 'promo_code_id'>>();
     if (!affiliate || affiliate.status === 'pending') {
         return Response.json({ ok: false, error: 'Approved affiliate not found' }, { status: 404 });
     }
@@ -36,11 +38,11 @@ export async function onRequestPost({ request, env }) {
         WHERE id=?3 AND status IN ('active','suspended')
           AND (status_change_target=?2 OR (status_change_id IS NULL AND status!=?2))
         RETURNING status_change_id, promo_code_id
-    `).bind(crypto.randomUUID(), status, id).first();
+    `).bind(crypto.randomUUID(), status, id).first<Pick<AffiliatesRow, 'status_change_id' | 'promo_code_id'>>();
 
     if (!operation) {
-        const current = await db.prepare('SELECT status, status_change_id FROM affiliates WHERE id=?1').bind(id).first();
-        if (current?.status === status && !current.status_change_id) {
+        const current = await db.prepare('SELECT status, status_change_id FROM affiliates WHERE id=?1').bind(id).first<Pick<AffiliatesRow, 'status' | 'status_change_id'>>();
+        if (current && current.status === status && !current.status_change_id) {
             return Response.json({ ok: true, affiliate_id: id, status });
         }
         return Response.json({ ok: false, error: 'Another status change is in progress' }, { status: 409 });
@@ -53,8 +55,8 @@ export async function onRequestPost({ request, env }) {
                 idempotencyKey: `aff_status_${operation.status_change_id}`,
             });
             if (promo.active !== (status === 'active')) throw new Error('Stripe returned an unexpected promotion status');
-        } catch (error) {
-            return Response.json({ ok: false, error: `Stripe promotion update failed: ${error.message}` }, { status: 502 });
+        } catch (error: unknown) {
+            return Response.json({ ok: false, error: `Stripe promotion update failed: ${errorMessage(error)}` }, { status: 502 });
         }
     }
     const updated = await db.prepare(`
@@ -62,8 +64,8 @@ export async function onRequestPost({ request, env }) {
         WHERE id=?2 AND status_change_id=?3
     `).bind(status, id, operation.status_change_id).run();
     if (!updated.meta.changes) {
-        const current = await db.prepare('SELECT status, status_change_id FROM affiliates WHERE id=?1').bind(id).first();
-        if (current?.status !== status || current.status_change_id) {
+        const current = await db.prepare('SELECT status, status_change_id FROM affiliates WHERE id=?1').bind(id).first<Pick<AffiliatesRow, 'status' | 'status_change_id'>>();
+        if (!current || current.status !== status || current.status_change_id) {
             return Response.json({ ok: false, error: 'Another status change is in progress' }, { status: 409 });
         }
     }

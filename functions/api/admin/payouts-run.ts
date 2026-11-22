@@ -8,9 +8,11 @@ import { requireAdmin } from './_gate.ts';
 import { readJsonObject } from '../_public.ts';
 import { isLocalAffiliateDev } from '../../../src/dev.ts';
 import { stripeRequest } from '../../../src/stripe.ts';
-import { finalizePayout, readPayout, releasePayout, transferGroup, TRANSFER_RETRY_WINDOW } from './_payout-batches.ts';
+import { finalizePayout, readPayout, releasePayout, transferGroup, TRANSFER_RETRY_WINDOW, readExistingPayout } from './_payout-batches.ts';
+import type { AffiliateRouteContext, AffiliateEnv, AffiliatesRow, PayoutsRow } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 
@@ -40,7 +42,7 @@ export async function onRequestPost(context) {
                     AND c.status='approved' AND c.payout_id IS NULL)
             OR EXISTS (SELECT 1 FROM payouts p WHERE p.affiliate_id=a.id AND p.status='pending')
         )
-    `).bind(affiliateId || null).all()).results || [];
+    `).bind(affiliateId || null).all<Pick<AffiliatesRow, 'id'>>()).results || [];
     if (!affiliates.length) {
         return Response.json({ ok: false, error: 'No approved conversions found' }, { status: 404 });
     }
@@ -49,15 +51,15 @@ export async function onRequestPost(context) {
     for (const aff of affiliates) {
         const batch = await claimBatch(db, aff.id);
         if (!batch) continue; // A concurrent run may have finalized the batch.
-        let error = await sendBatch(env, batch);
-        let current = await readPayout(db, batch.id);
+        let error = await sendBatch({ ...env, DB: db }, batch);
+        let current = await readExistingPayout(db, batch.id);
         if (current.status === 'pending' && current.has_refund) {
             if (await releasePayout(db, batch.id)) {
                 error = 'A conversion was refunded before sending. Run payouts again for the remaining approved conversions.';
             } else {
                 error = 'A conversion was refunded after a transfer attempt. Reconcile this payout with Stripe.';
             }
-            current = await readPayout(db, batch.id);
+            current = await readExistingPayout(db, batch.id);
         }
         if (current.status === 'pending') console.error(`Payout ${batch.id} remains pending:`, error);
         payouts.push({
@@ -74,7 +76,7 @@ export async function onRequestPost(context) {
     return Response.json({ ok, payouts }, { status: ok ? 200 : 502 });
 }
 
-async function sendBatch(env, batch) {
+async function sendBatch(env: AffiliateEnv & { DB: D1Database }, batch: PayoutsRow) {
     if (!batch.batch_key) return 'Legacy pending payout requires reconciliation before another payout';
     if (batch.currency && batch.currency !== 'usd') return 'Non-USD pending payout requires reconciliation';
     if (!Number.isFinite(batch.amount_cents) || batch.amount_cents <= 0) {
@@ -112,14 +114,14 @@ async function sendBatch(env, batch) {
             },
         });
         if (!transfer.id?.startsWith('tr_')) throw new Error('Stripe returned an invalid transfer ID');
-    } catch (error) {
-        return error.message;
+    } catch (error: unknown) {
+        return errorMessage(error);
     }
     await finalizePayout(db, batch.id, 'sent', transfer.id);
     return null;
 }
 
-async function claimBatch(db, affiliateId) {
+async function claimBatch(db: D1Database, affiliateId: number): Promise<PayoutsRow | null> {
     const batchKey = crypto.randomUUID();
     // D1 batch() executes these statements in one transaction. Either a new
     // batch claims the current approved set, or we resume an existing batch.
@@ -144,5 +146,5 @@ async function claimBatch(db, affiliateId) {
         db.prepare("SELECT * FROM payouts WHERE affiliate_id=?1 AND status='pending' ORDER BY id LIMIT 1")
             .bind(affiliateId),
     ]);
-    return results[3].results?.[0] || null;
+    return (results[3].results?.[0] as PayoutsRow | undefined) || null;
 }

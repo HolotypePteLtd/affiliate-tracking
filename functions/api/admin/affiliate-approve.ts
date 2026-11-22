@@ -19,10 +19,13 @@ import { sendEmail, escapeHtml } from '../_email.ts';
 import { readJsonObject } from '../_public.ts';
 import { isLocalAffiliateDev } from '../../../src/dev.ts';
 import { createOnboardingLink, stripeRequest } from '../../../src/stripe.ts';
+import type { StripeError } from '../../../src/stripe.ts';
+import type { AffiliateEnv, AffiliateRouteContext, AffiliatesRow } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
 const DEFAULT_COUPON = 'affiliate-10';
 
-async function createPromotion(env, affiliate, coupon, baseCode) {
+async function createPromotion(env: AffiliateEnv & { DB: D1Database }, affiliate: Pick<AffiliatesRow, 'id' | 'code'>, coupon: string, baseCode: string) {
     for (let attempt = 0; attempt < 5; attempt++) {
         const suffix = attempt ? `X${affiliate.id.toString(36).toUpperCase()}${attempt > 1 ? attempt : ''}` : '';
         const code = baseCode + suffix;
@@ -41,17 +44,18 @@ async function createPromotion(env, affiliate, coupon, baseCode) {
             });
             if (!promotion.id?.startsWith('promo_')) throw new Error('Stripe returned an invalid promotion code');
             return { id: promotion.id, code: promotion.code || code };
-        } catch (error) {
-            const collision = (!error.param || error.param === 'code') &&
-                (['resource_already_exists', 'promotion_code_already_exists'].includes(error.code) ||
-                 /promotion code.*(?:already (?:exists|in use)|must be unique)/i.test(error.message));
+        } catch (error: unknown) {
+            const stripeError = error as StripeError;
+            const collision = (!stripeError.param || stripeError.param === 'code') &&
+                (['resource_already_exists', 'promotion_code_already_exists'].includes(stripeError.code ?? '') ||
+                 /promotion code.*(?:already (?:exists|in use)|must be unique)/i.test(errorMessage(error)));
             if (!collision || attempt === 4) throw error;
         }
     }
     throw new Error('No available Stripe promotion code for this affiliate');
 }
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 
@@ -68,7 +72,7 @@ export async function onRequestPost(context) {
     // approved affiliates that don't have a connect account yet).
     const aff = await db.prepare(
         "SELECT id, code, email, name, status, commission_pct, promo_code_id, promo_code, source FROM affiliates WHERE id=?1 AND (status='pending' OR (status='active' AND stripe_account_id IS NULL))"
-    ).bind(id).first();
+    ).bind(id).first<Pick<AffiliatesRow, 'id' | 'code' | 'email' | 'name' | 'status' | 'commission_pct' | 'promo_code_id' | 'promo_code' | 'source'>>();
     if (!aff) {
         return Response.json({ ok: false, error: 'Affiliate not found or already fully approved' }, { status: 404 });
     }
@@ -90,21 +94,21 @@ export async function onRequestPost(context) {
     const promoCode = (aff.code + '10').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const couponName = coupon || DEFAULT_COUPON;
 
-    let promoData = { id: aff.promo_code_id, code: aff.promo_code || promoCode };
+    let promoData: { id: string | null; code: string } = { id: aff.promo_code_id, code: aff.promo_code || promoCode };
     if (!aff.promo_code_id) {
         try {
-            promoData = await createPromotion(env, aff, couponName, promoCode);
-        } catch (error) {
+            promoData = await createPromotion({ ...env, DB: db }, aff, couponName, promoCode);
+        } catch (error: unknown) {
             return Response.json({
                 ok: false,
-                error: `Failed to create promo code: ${error.message}`,
+                error: `Failed to create promo code: ${errorMessage(error)}`,
             }, { status: 502 });
         }
         // Preserve the code chosen by the first request to save it.
         const saved = await db.prepare("UPDATE affiliates SET promo_code_id=?1, promo_code=?2 WHERE id=?3 AND promo_code_id IS NULL AND status IN ('pending','active')")
             .bind(promoData.id, promoData.code, aff.id).run();
         if (!saved.meta.changes) {
-            const current = await db.prepare('SELECT status, promo_code_id, promo_code FROM affiliates WHERE id=?1').bind(aff.id).first();
+            const current = await db.prepare('SELECT status, promo_code_id, promo_code FROM affiliates WHERE id=?1').bind(aff.id).first<Pick<AffiliatesRow, 'status' | 'promo_code_id' | 'promo_code'>>();
             if (!current?.promo_code_id || current.status === 'suspended') {
                 return Response.json({ ok: false, error: 'Affiliate status changed during approval' }, { status: 409 });
             }
@@ -133,8 +137,8 @@ export async function onRequestPost(context) {
         if (!account.id?.startsWith('acct_')) throw new Error('Stripe returned an invalid Connect account');
         connectAccountId = account.id;
         connectOnboardingUrl = await createOnboardingLink(context.request, env, connectAccountId);
-    } catch (err) {
-        console.error('Connect setup failed:', err.message);
+    } catch (err: unknown) {
+        console.error('Connect setup failed:', errorMessage(err));
     }
 
     // --- Update the affiliate row ---
@@ -167,8 +171,8 @@ export async function onRequestPost(context) {
                 `,
             }, env);
             if (!mailRes.ok) console.error('Affiliate acceptance email failed:', mailRes.status);
-        } catch (err) {
-            console.error('Affiliate acceptance email failed:', err.message);
+        } catch (err: unknown) {
+            console.error('Affiliate acceptance email failed:', errorMessage(err));
         }
     }
 

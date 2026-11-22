@@ -48,6 +48,10 @@ export interface AdminDashboardAppearance {
 export type StripeReference = string | {
     id: string;
 };
+/** A parsed JSON request body. Untrusted: each handler checks the fields it reads. */
+export type JsonObject = Record<string, any>;
+/** A Stripe API object, read field by field where it is used. */
+export type StripeObject = Record<string, any>;
 export interface CheckoutLineItem {
     description?: string | null;
     quantity?: number | null;

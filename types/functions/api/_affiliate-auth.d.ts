@@ -1,10 +1,10 @@
 export declare const SESSION_COOKIE = "__Host-aff_session";
-export declare function parseCookies(header: any): {};
+export declare function parseCookies(header: string | null): Record<string, string>;
 export declare function readCookieValue(header: string | null, name: string): string | null;
-export declare function createMagicLink(affiliateId: any, secret: any, version?: number): Promise<string>;
-export declare function verifyMagicLink(token: any, secret: any): Promise<any>;
-export declare function createSession(affiliateId: any, secret: any, version?: number): Promise<string>;
-export declare function readSession(token: any, secret: any): Promise<any>;
-export declare function affiliateSessionToken(request: any): string | null;
-export declare function sessionCookieHeader(token: any, requestUrl: any, maxAge?: number): string;
-export declare function clearSessionCookieHeader(requestUrl: any): string;
+export declare function createMagicLink(affiliateId: number, secret: string, version?: number): Promise<string>;
+export declare function verifyMagicLink(token: string, secret: string): Promise<any>;
+export declare function createSession(affiliateId: number, secret: string, version?: number): Promise<string>;
+export declare function readSession(token: string, secret: string): Promise<any>;
+export declare function affiliateSessionToken(request: Request): string | null;
+export declare function sessionCookieHeader(token: string, requestUrl: string, maxAge?: number): string;
+export declare function clearSessionCookieHeader(requestUrl: string): string;

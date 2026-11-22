@@ -1,6 +1,7 @@
 import { requireAdmin } from './_gate.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
 
-export async function onRequestGet({ request, env }) {
+export async function onRequestGet({ request, env }: AffiliateRouteContext) {
     const gate = await requireAdmin(env, request);
     if (gate) return gate;
     if (!env.DB) return Response.json({ ok: false, error: 'DB not bound' }, { status: 500 });

@@ -1,8 +1,10 @@
 import { signedInAffiliate } from './_dashboard.ts';
 import { createOnboardingLink } from '../../../src/stripe.ts';
 import { isLocalAffiliateDev } from '../../../src/dev.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
-export async function onRequestGet({ request, env }) {
+export async function onRequestGet({ request, env }: AffiliateRouteContext) {
     const affiliate = await signedInAffiliate(request, env);
     if (affiliate instanceof Response) {
         if (affiliate.status === 401) return Response.redirect(new URL('/affiliates/', request.url).href, 302);
@@ -18,8 +20,8 @@ export async function onRequestGet({ request, env }) {
             'Cache-Control': 'no-store',
             'Referrer-Policy': 'no-referrer',
         } });
-    } catch (error) {
-        console.error('Stripe Connect onboarding link failed:', error.message);
+    } catch (error: unknown) {
+        console.error('Stripe Connect onboarding link failed:', errorMessage(error));
         return Response.json({ ok: false, error: 'Could not create a Stripe onboarding link. Please try again.' }, { status: 502 });
     }
 }

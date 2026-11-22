@@ -3,8 +3,9 @@
 
 import { clearSessionCookieHeader } from '../_affiliate-auth.ts';
 import { isSameOrigin } from '../_admin-auth.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     if (!isSameOrigin(context.request)) {
         return Response.json({ success: false, error: 'Cross-origin request denied' }, { status: 403 });
     }

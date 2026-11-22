@@ -2,21 +2,23 @@ import { requireAdmin } from './_gate.ts';
 import { readJsonObject } from '../_public.ts';
 import { isLocalAffiliateDev } from '../../../src/dev.ts';
 import { stripeId, stripeRequest } from '../../../src/stripe.ts';
-import { finalizePayout, linkLegacyConversions, readPayout, releasePayout, transferGroup, RELEASE_WINDOW } from './_payout-batches.ts';
+import { finalizePayout, linkLegacyConversions, readPayout, releasePayout, transferGroup, RELEASE_WINDOW, readExistingPayout } from './_payout-batches.ts';
+import type { AffiliateRouteContext, AffiliateEnv, PayoutsRow, StripeObject } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
-async function matchingTransfers(env, payout) {
+async function matchingTransfers(env: AffiliateEnv, payout: PayoutsRow): Promise<StripeObject[]> {
     if (payout.stripe_transfer_id) {
         return [await stripeRequest(env, `transfers/${encodeURIComponent(payout.stripe_transfer_id)}`)];
     }
     if (payout.batch_key && payout.transfer_started_at === null) return [];
     const search = new URLSearchParams({ transfer_group: transferGroup(payout.affiliate_id), limit: '100' });
-    const matches: any[] = [];
+    const matches: StripeObject[] = [];
     for (let page = 0; page < 10; page++) {
         const result = await stripeRequest(env, `transfers?${search}`);
         if (!Array.isArray(result.data) || typeof result.has_more !== 'boolean') {
             throw new Error('Stripe returned an invalid transfer list');
         }
-        matches.push(...result.data.filter(transfer => transfer.metadata?.payout_id === String(payout.id)));
+        matches.push(...result.data.filter((transfer: StripeObject) => transfer.metadata?.payout_id === String(payout.id)));
         if (!result.has_more || matches.length > 1) return matches;
         const next = stripeId(result.data.at(-1));
         if (!next || next === search.get('starting_after')) break;
@@ -25,7 +27,7 @@ async function matchingTransfers(env, payout) {
     throw new Error('Stripe transfer search did not finish');
 }
 
-function eligibleTransfer(transfer, payout) {
+function eligibleTransfer(transfer: StripeObject, payout: PayoutsRow) {
     return typeof transfer.id === 'string' && transfer.id.startsWith('tr_') &&
         (!payout.stripe_transfer_id || payout.stripe_transfer_id === transfer.id) &&
         transfer.metadata?.payout_id === String(payout.id) &&
@@ -35,9 +37,9 @@ function eligibleTransfer(transfer, payout) {
         transfer.reversed === false && transfer.amount_reversed === 0;
 }
 
-const error = (message, status) => Response.json({ ok: false, error: message }, { status });
+const error = (message: string, status: number) => Response.json({ ok: false, error: message }, { status });
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env }: AffiliateRouteContext) {
     const gate = await requireAdmin(env, request);
     if (gate) return gate;
     if (isLocalAffiliateDev(request, env)) return error('Payments are disabled in local demo mode', 409);
@@ -48,13 +50,13 @@ export async function onRequestPost({ request, env }) {
         return error('A payout id and a valid reconciliation action are required', 400);
     }
     if (conversionIds !== undefined && (!Array.isArray(conversionIds) || !conversionIds.length ||
-        conversionIds.length > 1000 || conversionIds.some(id => !Number.isSafeInteger(id) || id <= 0) ||
+        conversionIds.length > 1000 || conversionIds.some((id: unknown) => !Number.isSafeInteger(id) || (id as number) <= 0) ||
         new Set(conversionIds).size !== conversionIds.length)) {
         return error('conversionIds must contain up to 1,000 unique conversion ids', 400);
     }
     const payout = await readPayout(db, id);
     if (!payout) return error('Payout not found', 404);
-    const reply = current => Response.json({
+    const reply = (current: PayoutsRow) => Response.json({
         ok: true, payout_id: id, status: current.status, stripe_transfer_id: current.stripe_transfer_id,
     });
     if (payout.status !== 'pending') return reply(payout);
@@ -62,8 +64,8 @@ export async function onRequestPost({ request, env }) {
     let matches;
     try {
         matches = await matchingTransfers(env, payout);
-    } catch (err) {
-        return error(`Stripe transfer lookup failed: ${err.message}`, 502);
+    } catch (err: unknown) {
+        return error(`Stripe transfer lookup failed: ${errorMessage(err)}`, 502);
     }
     if (matches.length) {
         if (matches.length !== 1 || !eligibleTransfer(matches[0], payout)) {
@@ -73,7 +75,7 @@ export async function onRequestPost({ request, env }) {
             await linkLegacyConversions(db, payout, conversionIds);
         }
         await finalizePayout(db, id, 'sent', matches[0].id);
-        const current = await readPayout(db, id);
+        const current = await readExistingPayout(db, id);
         if (current.status === 'pending') {
             return error('This legacy transfer requires the original conversionIds and a matching currency and commission total.', 409);
         }
@@ -87,9 +89,9 @@ export async function onRequestPost({ request, env }) {
     }
     if (!canRelease) return error('Wait until 24 hours after the first attempt or batch creation before releasing this payout', 409);
     if (!await releasePayout(db, id, cutoff)) {
-        const current = await readPayout(db, id);
+        const current = await readExistingPayout(db, id);
         if (current.status !== 'pending') return reply(current);
         return error('The payout changed during reconciliation. Check it again before releasing it.', 409);
     }
-    return reply(await readPayout(db, id));
+    return reply(await readExistingPayout(db, id));
 }

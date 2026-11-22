@@ -12,8 +12,10 @@ import { sendEmail, escapeHtml } from '../_email.ts';
 import { readJsonObject } from '../_public.ts';
 import { createMagicLink } from '../_affiliate-auth.ts';
 import { isLocalAffiliateDev } from '../../../src/dev.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
+import { errorMessage } from '../../../src/errors.ts';
 
-export async function onRequestGet(context) {
+export async function onRequestGet(context: AffiliateRouteContext) {
     const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 
@@ -42,7 +44,7 @@ export async function onRequestGet(context) {
     return Response.json({ ok: true, affiliates: rows.results || [] });
 }
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 
@@ -79,14 +81,14 @@ export async function onRequestPost(context) {
         result = await db.prepare(
             "INSERT INTO affiliates (email, name, code, status, commission_pct, source, created_at) VALUES (?1,?2,?3,'pending',?4,?5,?6)"
         ).bind(normalizedEmail, safeName, refCode, pct, localDemo ? 'local-demo' : 'admin', Date.now()).run();
-    } catch (err) {
-        if (err.message?.includes('UNIQUE')) {
+    } catch (err: unknown) {
+        if (errorMessage(err)?.includes('UNIQUE')) {
             return Response.json(
                 { ok: false, error: 'An affiliate with this email or code already exists' },
                 { status: 409 }
             );
         }
-        console.error('Affiliate create failed:', err.message);
+        console.error('Affiliate create failed:', errorMessage(err));
         return Response.json({ ok: false, error: 'Failed to create affiliate' }, { status: 500 });
     }
 
@@ -109,8 +111,8 @@ export async function onRequestPost(context) {
             `,
             }, env);
             if (!response.ok) console.error('Affiliate invite email failed:', response.status);
-        } catch (err) {
-            console.error('Affiliate invite email failed:', err.message);
+        } catch (err: unknown) {
+            console.error('Affiliate invite email failed:', errorMessage(err));
         }
     }
 

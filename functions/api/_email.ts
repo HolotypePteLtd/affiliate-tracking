@@ -1,4 +1,5 @@
 import type { AffiliateEnv } from '../../src/types.ts';
+import { errorMessage } from '../../src/errors.ts';
 // Transactional email integration point.
 //
 // Defaults to Brevo (Sendinblue) but is configurable for any JSON-based
@@ -62,7 +63,7 @@ export async function sendEmail(apiKey: string, params: Record<string, unknown>,
 
 // Best-effort admin notification that must NOT gate the main request path.
 // No-op if the configured API key is unset.
-export async function notifyAdmin(env, { subject, body }) {
+export async function notifyAdmin(env: AffiliateEnv, { subject, body }: { subject: string; body: string }) {
     const apiKey = env.BREVO_API_KEY;
     if (!apiKey) return;
     try {
@@ -72,7 +73,7 @@ export async function notifyAdmin(env, { subject, body }) {
             htmlContent: body,
         }, env);
         if (!response.ok) console.error('Admin notification failed:', response.status);
-    } catch (err) {
-        console.error('Admin notification failed:', err.message);
+    } catch (err: unknown) {
+        console.error('Admin notification failed:', errorMessage(err));
     }
 }

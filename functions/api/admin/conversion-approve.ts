@@ -4,8 +4,9 @@
 
 import { requireAdmin } from './_gate.ts';
 import { readJsonObject } from '../_public.ts';
+import type { AffiliateRouteContext } from '../../../src/types.ts';
 
-export async function onRequestPost(context) {
+export async function onRequestPost(context: AffiliateRouteContext) {
     const gate = await requireAdmin(context.env, context.request);
     if (gate) return gate;
 

@@ -1,3 +1,4 @@
+import type { AffiliateEnv, AffiliatesRow, StripeObject } from './types.ts';
 // Stripe, rather than a submitted string or promotion metadata, confirms which
 // promotion was applied. Affiliate ownership comes from this host's D1 records.
 
@@ -13,7 +14,7 @@ export class PromotionCodeError extends Error {
     }
 }
 
-export async function findPromotionCode(code, env) {
+export async function findPromotionCode(code: string, env: AffiliateEnv) {
     if (!env.STRIPE_SECRET_KEY) {
         throw new PromotionCodeError('Promotion codes are temporarily unavailable.', 503, 'promo_code_unavailable');
     }
@@ -30,14 +31,14 @@ export async function findPromotionCode(code, env) {
     if (!response.ok) {
         throw new PromotionCodeError('Promotion codes are temporarily unavailable.', 503, 'promo_code_unavailable');
     }
-    const result = await response.json();
-    const matches = (result.data || []).filter(promo =>
+    const result: StripeObject = await response.json();
+    const matches = (result.data || []).filter((promo: StripeObject) =>
         typeof promo.id === 'string' && promo.id.startsWith('promo_') &&
         promo.active === true && typeof promo.code === 'string' &&
         promo.code.toLowerCase() === code.toLowerCase() &&
         (!promo.expires_at || promo.expires_at > Date.now() / 1000)
     );
-    const publicCodes = matches.filter(promo => !promo.customer && !promo.customer_account);
+    const publicCodes = matches.filter((promo: StripeObject) => !promo.customer && !promo.customer_account);
     const candidates = publicCodes.length ? publicCodes : matches;
     if (result.has_more || candidates.length !== 1) {
         throw new PromotionCodeError('This promo code is invalid or unavailable. Check it or remove it to continue.');
@@ -45,16 +46,16 @@ export async function findPromotionCode(code, env) {
     return candidates[0];
 }
 
-export async function affiliateForPromotion(promotionId, env) {
+export async function affiliateForPromotion(promotionId: string, env: AffiliateEnv) {
     if (!env.DB) return null;
     const { results } = await env.DB.prepare(
         "SELECT id, code, promo_code_id FROM affiliates WHERE promo_code_id=?1 AND status='active' LIMIT 2"
-    ).bind(promotionId).all();
+    ).bind(promotionId).all<Pick<AffiliatesRow, 'id' | 'code' | 'promo_code_id'>>();
     if (results.length > 1) throw new Error('Affiliate promotion ownership is ambiguous');
     return results[0] || null;
 }
 
-export async function resolvePaidAttribution(session, env) {
+export async function resolvePaidAttribution(session: StripeObject, env: AffiliateEnv): Promise<StripeObject> {
     let paidSession = session;
     // Older cookie-only integrations need no new Stripe call. New sessions
     // must verify their final discounts if the signed event omits that field.
@@ -68,7 +69,7 @@ export async function resolvePaidAttribution(session, env) {
             { headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` }, signal: AbortSignal.timeout(10000) }
         );
         if (!response.ok) throw new Error('Failed to verify applied checkout promotions');
-        const verified: any = await response.json();
+        const verified: StripeObject = await response.json();
         if (verified.id !== session.id || !('discounts' in verified)) {
             throw new Error('Checkout promotion verification was incomplete');
         }

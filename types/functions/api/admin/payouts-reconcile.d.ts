@@ -1,4 +1,2 @@
-export declare function onRequestPost({ request, env }: {
-    env: any;
-    request: any;
-}): Promise<Response>;
+import type { AffiliateRouteContext } from '../../../src/types.ts';
+export declare function onRequestPost({ request, env }: AffiliateRouteContext): Promise<Response>;

@@ -6,7 +6,7 @@ export declare function emailSender(env?: AffiliateEnv): {
 };
 export declare function adminEmail(env?: AffiliateEnv): string;
 export declare function sendEmail(apiKey: string, params: Record<string, unknown>, env?: AffiliateEnv): Promise<Response>;
-export declare function notifyAdmin(env: any, { subject, body }: {
-    body: any;
-    subject: any;
+export declare function notifyAdmin(env: AffiliateEnv, { subject, body }: {
+    subject: string;
+    body: string;
 }): Promise<void>;

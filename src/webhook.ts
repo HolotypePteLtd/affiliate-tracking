@@ -4,7 +4,7 @@
 import { currencyCode } from './money.ts';
 import { resolvePaidAttribution } from './promotion.ts';
 import { stripeId, stripeRequest } from './stripe.ts';
-import type { AffiliateEnv, AffiliatesRow, CheckoutLineItem, CheckoutSession, StripeEvent } from './types.ts';
+import type { AffiliateEnv, AffiliatesRow, CheckoutLineItem, CheckoutSession, StripeEvent, StripeObject } from './types.ts';
 
 export async function recordConversion<T extends CheckoutSession>(
     input: T | null | undefined, event: StripeEvent | null | undefined, env: AffiliateEnv,
@@ -12,7 +12,7 @@ export async function recordConversion<T extends CheckoutSession>(
 ): Promise<(Omit<T, 'metadata'> & { metadata: Record<string, string> }) | null> {
     if (!input) return null;
     // Stripe payloads are read field by field below.
-    let session: any = input;
+    let session: StripeObject = input;
     // Resolve before the first insert: idempotent retries preserve the original
     // affiliate and money, so a provisional cookie attribution must never win.
     const candidate = session.metadata?.affiliate_id || session.metadata?.affiliate_attribution_version ||
@@ -88,7 +88,7 @@ export async function recordConversion<T extends CheckoutSession>(
         aff.commission_pct,
         JSON.stringify(items)
     ).run();
-    return session;
+    return session as Omit<T, 'metadata'> & { metadata: Record<string, string> };
 }
 
 // Call after verifying the Stripe signature. Keep a marker even if Checkout
@@ -96,10 +96,10 @@ export async function recordConversion<T extends CheckoutSession>(
 /** Records a verified refund or dispute webhook and returns the number of conversions updated. */
 export async function recordRefund(event: StripeEvent | null | undefined, env: AffiliateEnv): Promise<number> {
     if (event?.type !== 'charge.refunded' && event?.type !== 'charge.dispute.created') return 0;
-    const object: any = event.data?.object;
+    const object = event.data?.object as StripeObject | undefined;
     let paymentIntent = stripeId(object?.payment_intent ?? object?.charge?.payment_intent);
     if (!paymentIntent && event.type === 'charge.dispute.created' && typeof object?.charge === 'string') {
-        const charge: any = await stripeRequest(env, `charges/${encodeURIComponent(object.charge)}`);
+        const charge = await stripeRequest(env, `charges/${encodeURIComponent(object.charge)}`);
         paymentIntent = stripeId(charge.payment_intent);
     }
     if (!paymentIntent) return 0;

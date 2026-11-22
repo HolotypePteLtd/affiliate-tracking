@@ -1,19 +1,22 @@
 import { signedInAffiliate, conversionFilter, CONVERSION_COLUMNS, publicConversion } from './_dashboard.ts';
+import type { AffiliateRouteContext, ConversionsRow } from '../../../src/types.ts';
 
-function csvCell(value) {
+function csvCell(value: unknown) {
     let text = value == null ? '' : String(value);
     // Prevent product/variant strings from becoming spreadsheet formulas.
     if (typeof value === 'string' && /^[\s]*[=+@-]/.test(text)) text = "'" + text;
     return '"' + text.replace(/"/g, '""') + '"';
 }
 
-const csvLine = values => values.map(csvCell).join(',') + '\r\n';
-const date = value => value == null ? '' : new Date(value).toISOString();
-const amount = (value, decimals) => decimals == null ? '' : (value / 10 ** decimals).toFixed(decimals);
+const csvLine = (values: unknown[]) => values.map(csvCell).join(',') + '\r\n';
+const date = (value: number | null) => value == null ? '' : new Date(value).toISOString();
+const amount = (value: number, decimals: number | null) => decimals == null ? '' : (value / 10 ** decimals).toFixed(decimals);
 
-export async function onRequestGet(context) {
+export async function onRequestGet(context: AffiliateRouteContext) {
     const affiliate = await signedInAffiliate(context.request, context.env);
     if (affiliate instanceof Response) return affiliate;
+    const db = context.env.DB;
+    if (!db) return Response.json({ error: 'Affiliate login is not configured' }, { status: 503 });
     const filter = conversionFilter(new URL(context.request.url).searchParams, affiliate.id);
     if (filter instanceof Response) return filter;
     const encoder = new TextEncoder();
@@ -34,9 +37,9 @@ export async function onRequestGet(context) {
                     bindings.push(cursor.created_at, cursor.id);
                     where += ` AND (created_at < ?${bindings.length - 1} OR (created_at = ?${bindings.length - 1} AND id < ?${bindings.length}))`;
                 }
-                const rows = (await context.env.DB.prepare(
+                const rows = (await db.prepare(
                     `SELECT ${CONVERSION_COLUMNS} FROM conversions WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT 200`
-                ).bind(...bindings).all()).results || [];
+                ).bind(...bindings).all<ConversionsRow>()).results || [];
                 if (cancelled) return;
                 const output = rows.map(row => {
                     const c = publicConversion(row);
@@ -50,7 +53,7 @@ export async function onRequestGet(context) {
                 if (output) controller.enqueue(encoder.encode(output));
                 if (rows.length < 200) controller.close();
                 else cursor = rows[rows.length - 1];
-            } catch (error) {
+            } catch (error: unknown) {
                 if (!cancelled) controller.error(error);
             }
         },
