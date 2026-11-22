@@ -14,6 +14,7 @@ import { onRequestGet as affConnectOnboarding } from '../functions/api/affiliate
 import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from '../functions/api/admin/affiliates.js';
 import { onRequestPost as adminAffiliateApprove } from '../functions/api/admin/affiliate-approve.js';
 import { onRequestPost as adminAffiliateStatus } from '../functions/api/admin/affiliate-status.js';
+import { onRequestPost as adminAffiliateReview } from '../functions/api/admin/affiliate-review.js';
 import { onRequestPost as adminAffiliateRevokeSessions } from '../functions/api/admin/affiliate-revoke-sessions.js';
 import { onRequestGet as adminConversionsGet } from '../functions/api/admin/conversions.js';
 import { onRequestPost as adminConversionApprove } from '../functions/api/admin/conversion-approve.js';
@@ -44,6 +45,7 @@ export const affiliateRoutes = [
     ['POST', '/api/admin/affiliates', adminAffiliatesPost],
     ['POST', '/api/admin/affiliate-approve', adminAffiliateApprove],
     ['POST', '/api/admin/affiliate-status', adminAffiliateStatus],
+    ['POST', '/api/admin/affiliate-review', adminAffiliateReview],
     ['POST', '/api/admin/affiliate-revoke-sessions', adminAffiliateRevokeSessions],
     ['GET', '/api/admin/conversions', adminConversionsGet],
     ['POST', '/api/admin/conversion-approve', adminConversionApprove],

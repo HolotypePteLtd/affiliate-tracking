@@ -26,6 +26,8 @@ export interface AffiliateEnv {
     AFFILIATE_IP_SALT?: string;
     AFFILIATE_DEV_MODE?: string;
     AFFILIATE_TERMS_VERSION?: string;
+    /** Whole days before a pending conversion is approved automatically. Unset: manual approval only. */
+    AFFILIATE_HOLD_DAYS?: string;
     AFFILIATE_PUBLIC_LIMITER?: {
         limit(options: { key: string }): Promise<{ success: boolean }>;
     };
@@ -121,3 +123,6 @@ export function recordConversion<T extends CheckoutSession>(
 
 /** Records a verified refund or dispute webhook and returns the number of conversions updated. */
 export function recordRefund(event: StripeEvent | null | undefined, env: AffiliateEnv): Promise<number>;
+
+/** Approves pending conversions older than AFFILIATE_HOLD_DAYS. Returns how many were approved; 0 when unset. */
+export function releaseHeldConversions(env: AffiliateEnv, now?: number): Promise<number>;

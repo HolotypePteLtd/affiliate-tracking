@@ -29,6 +29,10 @@
 //   recordRefund(event, env)
 //       Await in the verified charge.refunded and charge.dispute.created branches.
 //
+//   releaseHeldConversions(env, now?)
+//       Call from your scheduled() handler. With AFFILIATE_HOLD_DAYS set,
+//       approves pending conversions older than the hold period. Unset: no-op.
+//
 //   adminDashboard(context, appearance?)
 //       Returns the shared admin UI with optional host branding and styles.
 //       Serve before handleAffiliateApi to customize the dashboard page.
@@ -42,3 +46,4 @@ export { applyAffiliateRef, refCookieName, DEFAULT_REF_COOKIE } from './ref.js';
 export { attachAffiliateAttribution } from './checkout.js';
 export { PromotionCodeError } from './promotion.js';
 export { recordConversion, recordRefund } from './webhook.js';
+export { releaseHeldConversions } from './hold.js';

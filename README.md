@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0006_hold_period.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -275,6 +276,45 @@ payout run claims the remaining approved commissions under a fresh key.
 For a verified legacy transfer without attached conversions, pass the
 original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
 
+### Automatic hold period (`releaseHeldConversions`)
+
+By default every conversion waits for an admin to approve it. To approve them
+automatically once refunds are unlikely, set a hold period in days and call
+the helper from your Worker's `scheduled()` handler:
+
+```toml
+[vars]
+AFFILIATE_HOLD_DAYS = "30"
+
+[triggers]
+crons = ["0 3 * * *"]   # once a day is enough
+```
+
+```js
+import { releaseHeldConversions } from "cf-affiliate";
+
+export default {
+    async scheduled(event, env, ctx) {
+        ctx.waitUntil(releaseHeldConversions(env));
+    },
+};
+```
+
+A pending conversion becomes `approved` once it is at least
+`AFFILIATE_HOLD_DAYS` old, unless it was refunded or disputed (including a
+refund that arrived before the checkout webhook), its affiliate is not
+`active`, or the affiliate is flagged for review. Manual approve and reject
+still work at any time. With `AFFILIATE_HOLD_DAYS` unset the helper does
+nothing, so existing hosts keep manual approval.
+
+Flag an affiliate whose conversions should always be reviewed by hand:
+
+```bash
+curl -X POST https://yoursite.com/api/admin/affiliate-review \
+  -H "x-admin-token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"id":1,"review_required":true}'
+```
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -323,6 +363,8 @@ context to the helpers directly.
 | `functions/api/admin/affiliate-approve.js` | Mint promo code + Connect account + acceptance email |
 | `functions/api/admin/conversions.js` | List conversions |
 | `functions/api/admin/conversion-approve.js` | Approve/reject conversions |
+| `functions/api/admin/affiliate-review.js` | Always review one affiliate's conversions by hand |
+| `src/hold.js` | Automatic hold period (`releaseHeldConversions`) |
 | `functions/api/admin/payouts-run.js` | Stripe Transfer or manual payout |
 | `functions/api/admin/payouts-reconcile.js` | Pending batch reconciliation |
 | `tests/unit/` | Unit tests (crypto, auth, gate, email) |
@@ -348,6 +390,7 @@ routes itself — see `src/route.js` for the exact paths.
 | `ADMIN_TOKEN` | `wrangler secret put` | Admin API gate |
 | `AFFILIATE_REF_COOKIE` | optional | Attribution cookie name (default `affiliate_ref`) |
 | `AFFILIATE_IP_SALT` | optional | IP hash salt |
+| `AFFILIATE_HOLD_DAYS` | optional | Days before pending conversions are approved automatically (unset: manual only) |
 
 ## Tests
 
