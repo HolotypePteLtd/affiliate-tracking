@@ -1,6 +1,6 @@
 import { it, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import { onRequestPost as apply } from '../../functions/api/affiliate/apply.js';
+import { onRequestPost as apply } from '../../functions/api/affiliate/apply.ts';
 import { database } from './_db.js';
 const handles = [];
 const realDB = () => { const db = database(); handles.push(db.sql); return db; };

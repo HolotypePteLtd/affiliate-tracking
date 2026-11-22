@@ -5,8 +5,8 @@ const it = (title, run) => vitestIt(title, async () => {
  finally { for(const cleanup of cleanups.reverse()) await cleanup(); }
 });
 import assert from 'node:assert/strict';
-import { attachAffiliateAttribution } from '../../src/checkout.js';
-import { recordConversion } from '../../src/webhook.js';
+import { attachAffiliateAttribution } from '../../src/checkout.ts';
+import { recordConversion } from '../../src/webhook.ts';
 import { database as realDB } from './_db.js';
 
 function database(t) {

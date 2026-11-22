@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { requireAdmin } from '../../functions/api/admin/_gate.js';
+import { requireAdmin } from '../../functions/api/admin/_gate.ts';
 function request(token) { return new Request('https://shop.example/api/admin/affiliates', { headers: token ? { 'x-admin-token': token } : {} }); }
 describe('requireAdmin', () => {
     it('denies missing admin configuration', async () => { expect((await requireAdmin({}, request('anything'))).status).toBe(503); });

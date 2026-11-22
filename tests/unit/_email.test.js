@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { escapeHtml } from '../../functions/api/_email.js';
+import { escapeHtml } from '../../functions/api/_email.ts';
 
 describe('escapeHtml', () => {
     it('escapes &', () => {

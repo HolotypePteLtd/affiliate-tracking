@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { applyAffiliateRef, handleAffiliateApi, recordConversion, recordRefund } from '../../src/index.js';
-import { createMagicLink } from '../../functions/api/_affiliate-auth.js';
-import { createAdminSession } from '../../functions/api/_admin-auth.js';
+import { applyAffiliateRef, handleAffiliateApi, recordConversion, recordRefund } from '../../src/index.ts';
+import { createMagicLink } from '../../functions/api/_affiliate-auth.ts';
+import { createAdminSession } from '../../functions/api/_admin-auth.ts';
 import { context, database } from './_db.js';
 
 let sql, env;

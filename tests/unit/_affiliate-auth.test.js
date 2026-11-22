@@ -8,7 +8,7 @@ import {
     readSession,
     sessionCookieHeader,
     clearSessionCookieHeader,
-} from '../../functions/api/_affiliate-auth.js';
+} from '../../functions/api/_affiliate-auth.ts';
 
 const SECRET = 'test-secret-the-quick-brown-fox';
 

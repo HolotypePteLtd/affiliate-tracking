@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { database, context } from './_db.js';
-import { onRequestPost as payout } from '../../functions/api/admin/payouts-run.js';
-import { onRequestPost as approveConversion } from '../../functions/api/admin/conversion-approve.js';
-import { handleAffiliateApi, recordRefund } from '../../src/index.js';
+import { onRequestPost as payout } from '../../functions/api/admin/payouts-run.ts';
+import { onRequestPost as approveConversion } from '../../functions/api/admin/conversion-approve.ts';
+import { handleAffiliateApi, recordRefund } from '../../src/index.ts';
 
 let sql, env, fetchMock;
 function conversion(id, commission = 2000, status = 'approved') {

@@ -3,12 +3,12 @@ const cleanups = [];
 afterEach(() => { for (const fn of cleanups.splice(0).reverse()) fn(); });
 import assert from 'node:assert/strict';
 import { database as realDB } from './_db.js';
-import { recordConversion } from '../../src/webhook.js';
-import { createSession } from '../../functions/api/_affiliate-auth.js';
-import { onRequestGet as me } from '../../functions/api/affiliate/me.js';
-import { onRequestGet as exportCSV } from '../../functions/api/affiliate/export.js';
-import { onRequestPost as runPayouts } from '../../functions/api/admin/payouts-run.js';
-import { currencyDecimals } from '../../src/money.js';
+import { recordConversion } from '../../src/webhook.ts';
+import { createSession } from '../../functions/api/_affiliate-auth.ts';
+import { onRequestGet as me } from '../../functions/api/affiliate/me.ts';
+import { onRequestGet as exportCSV } from '../../functions/api/affiliate/export.ts';
+import { onRequestPost as runPayouts } from '../../functions/api/admin/payouts-run.ts';
+import { currencyDecimals } from '../../src/money.ts';
 
 async function setup(t) {
     const { sql, DB } = realDB();

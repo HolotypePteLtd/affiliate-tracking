@@ -4,25 +4,31 @@
   "description": "Self-hosted affiliate program for Cloudflare Workers + Stripe: referral links, checkout attribution, conversions, payouts, self-serve applications.",
   "license": "MIT",
   "type": "module",
-  "main": "src/index.js",
-  "types": "src/index.d.ts",
+  "main": "src/index.ts",
+  "types": "types/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "default": "./src/index.js"
+      "types": "./types/src/index.d.ts",
+      "default": "./src/index.ts"
     }
   },
   "files": [
     "src",
     "functions",
     "migrations",
-    "examples"
+    "examples",
+    "types"
   ],
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc -p .",
+    "build:types": "tsc -p tsconfig.build.json",
+    "db:types": "node scripts/generate-db-types.mjs"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261121.1",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   }
 }

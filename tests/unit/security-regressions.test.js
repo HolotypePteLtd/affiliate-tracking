@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { database, context } from './_db.js';
-import { onRequestPost as apply } from '../../functions/api/affiliate/apply.js';
-import { onRequestPost as affLoginPost, onRequestGet as affLoginGet } from '../../functions/api/affiliate/login.js';
-import { onRequestPost as affLogout } from '../../functions/api/affiliate/logout.js';
-import { onRequestGet as affMe } from '../../functions/api/affiliate/me.js';
-import { onRequestPost as adminLogin } from '../../functions/api/admin/login.js';
-import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from '../../functions/api/admin/affiliates.js';
-import { onRequestPost as adminApprove } from '../../functions/api/admin/affiliate-approve.js';
-import { onRequestPost as adminConversionApprove } from '../../functions/api/admin/conversion-approve.js';
-import { onRequestPost as adminPayoutsRun } from '../../functions/api/admin/payouts-run.js';
-import { createMagicLink, createSession } from '../../functions/api/_affiliate-auth.js';
-import { createAdminSession } from '../../functions/api/_admin-auth.js';
-import { recordConversion } from '../../src/webhook.js';
-import { attachAffiliateAttribution } from '../../src/checkout.js';
-import { applyAffiliateRef } from '../../src/ref.js';
-import { adminDashboard } from '../../src/admin-dashboard.js';
+import { onRequestPost as apply } from '../../functions/api/affiliate/apply.ts';
+import { onRequestPost as affLoginPost, onRequestGet as affLoginGet } from '../../functions/api/affiliate/login.ts';
+import { onRequestPost as affLogout } from '../../functions/api/affiliate/logout.ts';
+import { onRequestGet as affMe } from '../../functions/api/affiliate/me.ts';
+import { onRequestPost as adminLogin } from '../../functions/api/admin/login.ts';
+import { onRequestGet as adminAffiliatesGet, onRequestPost as adminAffiliatesPost } from '../../functions/api/admin/affiliates.ts';
+import { onRequestPost as adminApprove } from '../../functions/api/admin/affiliate-approve.ts';
+import { onRequestPost as adminConversionApprove } from '../../functions/api/admin/conversion-approve.ts';
+import { onRequestPost as adminPayoutsRun } from '../../functions/api/admin/payouts-run.ts';
+import { createMagicLink, createSession } from '../../functions/api/_affiliate-auth.ts';
+import { createAdminSession } from '../../functions/api/_admin-auth.ts';
+import { recordConversion } from '../../src/webhook.ts';
+import { attachAffiliateAttribution } from '../../src/checkout.ts';
+import { applyAffiliateRef } from '../../src/ref.ts';
+import { adminDashboard } from '../../src/admin-dashboard.ts';
 
 const dbs = [];
 function makeDb() {

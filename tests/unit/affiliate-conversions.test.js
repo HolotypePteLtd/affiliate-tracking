@@ -2,8 +2,8 @@ import { describe, it, afterEach } from 'vitest';
 const cleanups = [];
 afterEach(() => { for (const fn of cleanups.splice(0).reverse()) fn(); });
 import assert from 'node:assert/strict';
-import { onRequestGet } from '../../functions/api/affiliate/me.js';
-import { createSession } from '../../functions/api/_affiliate-auth.js';
+import { onRequestGet } from '../../functions/api/affiliate/me.ts';
+import { createSession } from '../../functions/api/_affiliate-auth.ts';
 import { database as realDB } from './_db.js';
 
 async function setup(t) {

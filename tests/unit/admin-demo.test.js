@@ -4,10 +4,10 @@ function cleanup(fn) { cleanups.push(fn); }
 afterEach(() => { for (const fn of cleanups.splice(0).reverse()) fn(); });
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { handleAffiliateApi } from '../../src/route.js';
+import { handleAffiliateApi } from '../../src/route.ts';
 const worker = { fetch: handleAffiliateApi };
-import { createAdminSession } from '../../functions/api/_admin-auth.js';
-import { createSession } from '../../functions/api/_affiliate-auth.js';
+import { createAdminSession } from '../../functions/api/_admin-auth.ts';
+import { createSession } from '../../functions/api/_affiliate-auth.ts';
 import { database as realDB } from './_db.js';
 const allowLimiter = { limit: async () => ({ success: true }) };
 

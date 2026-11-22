@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { database, context } from './_db.js';
-import { onRequestPost as apply } from '../../functions/api/affiliate/apply.js';
-import { onRequestPost as approve } from '../../functions/api/admin/affiliate-approve.js';
-import { applyAffiliateRef } from '../../src/ref.js';
+import { onRequestPost as apply } from '../../functions/api/affiliate/apply.ts';
+import { onRequestPost as approve } from '../../functions/api/admin/affiliate-approve.ts';
+import { applyAffiliateRef } from '../../src/ref.ts';
 
 let sql, env, fetchMock;
 beforeEach(() => {

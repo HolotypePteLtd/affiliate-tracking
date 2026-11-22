@@ -1,7 +1,7 @@
 import { afterEach, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { applyAffiliateRef, refCookieName } from '../../src/ref.js';
-import { attachAffiliateAttribution } from '../../src/checkout.js';
+import { applyAffiliateRef, refCookieName } from '../../src/ref.ts';
+import { attachAffiliateAttribution } from '../../src/checkout.ts';
 import { database as realDB } from './_db.js';
 
 const COOKIE = '__Host-holotype_ref';

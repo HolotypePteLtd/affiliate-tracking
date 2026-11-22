@@ -4,7 +4,7 @@ import {
     importHmacKey,
     hmacHex,
     hexEncode,
-} from '../../functions/api/_crypto-utils.js';
+} from '../../functions/api/_crypto-utils.ts';
 
 describe('constantTimeCompare', () => {
     it('returns true for equal strings', () => {
