@@ -15,7 +15,11 @@
 //       Response with the attribution cookie appended, or null when the URL
 //       has no ?ref= (or the code is unknown) so you fall through untouched.
 //
-//   attachAffiliateAttribution(params, request, env, { promoCode }?)
+//   recordSignupReferral(requestOrHeaders, env, userId)
+//       Call when a user signs up. Ties the user to the affiliate in the
+//       referral cookie, so a later purchase is credited after it expires.
+//
+//   attachAffiliateAttribution(params, request, env, { promoCode, userId }?)
 //       Await this on your Checkout Session URLSearchParams before POSTing to
 //       Stripe. Adds client_reference_id, metadata, and the buyer-discount
 //       promotion code. An entered valid affiliate promotion overrides cookies.
@@ -40,5 +44,6 @@ export { handleAffiliateApi, affiliateRoutes } from './route.js';
 export { adminDashboard } from './admin-dashboard.js';
 export { applyAffiliateRef, refCookieName, DEFAULT_REF_COOKIE } from './ref.js';
 export { attachAffiliateAttribution } from './checkout.js';
+export { recordSignupReferral } from './referral.js';
 export { PromotionCodeError } from './promotion.js';
 export { recordConversion, recordRefund } from './webhook.js';

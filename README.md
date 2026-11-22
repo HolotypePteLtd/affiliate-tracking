@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0009_referrals.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -275,6 +276,51 @@ payout run claims the remaining approved commissions under a fresh key.
 For a verified legacy transfer without attached conversions, pass the
 original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
 
+### Signup referrals (`recordSignupReferral`)
+
+If your site has user accounts, record the referral when the user signs up.
+The cookie lasts 30 days and lives in one browser; a referral stored against
+the user lasts for good, so someone who signs up today and pays in two months,
+or on another device, is still credited.
+
+```js
+import { recordSignupReferral } from "cf-affiliate";
+
+// Right after you create the user. Pass the signup Request or its Headers.
+await recordSignupReferral(request, env, user.id);
+```
+
+With Better Auth, use a database hook (its context carries the request headers):
+
+```js
+betterAuth({
+    databaseHooks: {
+        user: { create: { after: async (user, ctx) => {
+            if (ctx?.headers) await recordSignupReferral(ctx.headers, env, user.id);
+        } } },
+    },
+});
+```
+
+Then pass the same id at checkout:
+
+```js
+await attachAffiliateAttribution(params, request, env, { promoCode: body.promo_code, userId: user.id });
+```
+
+The rules:
+
+- The stored referral comes first; the cookie is used only when the user has none.
+- A later cookie never replaces the signup referral.
+- An affiliate promo code entered at the user's **first** payment still wins,
+  and is stored as the user's referral. After the first paid conversion the
+  referral never changes.
+- A user with no referral who buys through a cookie gets one stored then.
+- The first payment also stores the Stripe customer id on the referral.
+
+Referrals live in the `referrals` table (one row per user, UUID ids); each
+conversion records its `user_id`.
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -310,6 +356,7 @@ context to the helpers directly.
 | `src/route.js` | Route table + `handleAffiliateApi` |
 | `src/ref.js` | Ref middleware (`applyAffiliateRef`) + cookie parsing |
 | `src/checkout.js` | Checkout attribution (`attachAffiliateAttribution`) |
+| `src/referral.js` | Signup referrals (`recordSignupReferral`) |
 | `src/webhook.js` | Conversion, refund, and dispute recording |
 | `functions/api/_affiliate-auth.js` | HMAC magic-link + session tokens |
 | `functions/api/_crypto-utils.js` | Shared HMAC + constant-time compare |
