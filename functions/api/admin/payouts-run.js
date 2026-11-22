@@ -8,6 +8,7 @@ import { requireAdmin } from './_gate.js';
 import { readJsonObject } from '../_public.js';
 import { isLocalAffiliateDev } from '../../../src/dev.js';
 import { stripeRequest } from '../../../src/stripe.js';
+import { payoutCurrency, settleApprovedCommissions } from '../../../src/settlement.js';
 import { finalizePayout, readPayout, releasePayout, transferGroup, TRANSFER_RETRY_WINDOW } from './_payout-batches.js';
 
 export async function onRequestPost(context) {
@@ -25,13 +26,21 @@ export async function onRequestPost(context) {
     }
 
     const { affiliateId } = await readJsonObject(context.request);
-    // This payout runner sends USD. Preserve that established behavior while
-    // preventing newly recorded foreign/unknown amounts from being paid as USD.
+    // Payouts are sent in the platform's currency. Commissions in other
+    // currencies are converted at the rate Stripe settled their sale at;
+    // any that can't be (unknown currency, no settled charge) block the run.
+    let currency;
+    try {
+        currency = payoutCurrency(env);
+        await settleApprovedCommissions(env, affiliateId || null);
+    } catch (err) {
+        return Response.json({ ok: false, error: err.message }, { status: 500 });
+    }
     const unsupported = await db.prepare(`SELECT id FROM conversions
         WHERE status='approved' AND payout_id IS NULL AND (?1 IS NULL OR affiliate_id=?1)
-          AND (currency IS NULL OR currency!='usd') LIMIT 1`).bind(affiliateId || null).first();
+          AND (payout_cents IS NULL OR payout_currency IS NULL OR payout_currency!=?2) LIMIT 1`).bind(affiliateId || null, currency).first();
     if (unsupported) {
-        return Response.json({ ok: false, error: 'Non-USD or unknown-currency commissions require reconciliation before USD payouts' }, { status: 409 });
+        return Response.json({ ok: false, error: `Some commissions could not be converted to ${currency.toUpperCase()} and require reconciliation before payouts` }, { status: 409 });
     }
     const affiliates = (await db.prepare(`
         SELECT a.id FROM affiliates a
@@ -47,9 +56,9 @@ export async function onRequestPost(context) {
 
     const payouts = [];
     for (const aff of affiliates) {
-        const batch = await claimBatch(db, aff.id);
+        const batch = await claimBatch(db, aff.id, currency);
         if (!batch) continue; // A concurrent run may have finalized the batch.
-        let error = await sendBatch(env, batch);
+        let error = await sendBatch(env, batch, currency);
         let current = await readPayout(db, batch.id);
         if (current.status === 'pending' && current.has_refund) {
             if (await releasePayout(db, batch.id)) {
@@ -74,9 +83,9 @@ export async function onRequestPost(context) {
     return Response.json({ ok, payouts }, { status: ok ? 200 : 502 });
 }
 
-async function sendBatch(env, batch) {
+async function sendBatch(env, batch, currency) {
     if (!batch.batch_key) return 'Legacy pending payout requires reconciliation before another payout';
-    if (batch.currency && batch.currency !== 'usd') return 'Non-USD pending payout requires reconciliation';
+    if (batch.currency !== currency) return `A pending ${String(batch.currency).toUpperCase()} payout requires reconciliation`;
     if (!Number.isFinite(batch.amount_cents) || batch.amount_cents <= 0) {
         return 'Pending payout has non-positive amount and requires reconciliation';
     }
@@ -104,7 +113,7 @@ async function sendBatch(env, batch) {
             idempotencyKey: `aff_transfer_${batch.batch_key}`,
             form: {
                 amount: String(batch.amount_cents),
-                currency: 'usd',
+                currency: batch.currency,
                 destination: batch.stripe_account_id,
                 'metadata[affiliate_id]': String(batch.affiliate_id),
                 'metadata[payout_id]': String(batch.id),
@@ -119,26 +128,26 @@ async function sendBatch(env, batch) {
     return null;
 }
 
-async function claimBatch(db, affiliateId) {
+async function claimBatch(db, affiliateId, currency) {
     const batchKey = crypto.randomUUID();
     // D1 batch() executes these statements in one transaction. Either a new
     // batch claims the current approved set, or we resume an existing batch.
     const results = await db.batch([
         db.prepare(`
-            INSERT INTO payouts (affiliate_id, amount_cents, status, created_at, batch_key, stripe_account_id)
-            SELECT id, 0, 'pending', ?1, ?2, stripe_account_id FROM affiliates
+            INSERT INTO payouts (affiliate_id, amount_cents, status, created_at, batch_key, stripe_account_id, currency)
+            SELECT id, 0, 'pending', ?1, ?2, stripe_account_id, ?4 FROM affiliates
             WHERE id=?3
               AND NOT EXISTS (SELECT 1 FROM payouts WHERE affiliate_id=?3 AND status='pending')
-              AND (SELECT COALESCE(SUM(commission_cents),0) FROM conversions
-                   WHERE affiliate_id=?3 AND status='approved' AND payout_id IS NULL AND currency='usd') > 0
-        `).bind(Date.now(), batchKey, affiliateId),
+              AND (SELECT COALESCE(SUM(payout_cents),0) FROM conversions
+                   WHERE affiliate_id=?3 AND status='approved' AND payout_id IS NULL AND payout_currency=?4) > 0
+        `).bind(Date.now(), batchKey, affiliateId, currency),
         db.prepare(`
             UPDATE conversions SET status='paying', payout_id=(SELECT id FROM payouts WHERE batch_key=?1)
-            WHERE affiliate_id=?2 AND status='approved' AND payout_id IS NULL AND currency='usd'
-              AND EXISTS (SELECT 1 FROM payouts WHERE batch_key=?1)
-        `).bind(batchKey, affiliateId),
+            WHERE affiliate_id=?2 AND status='approved' AND payout_id IS NULL AND payout_currency=?3
+              AND payout_cents IS NOT NULL AND EXISTS (SELECT 1 FROM payouts WHERE batch_key=?1)
+        `).bind(batchKey, affiliateId, currency),
         db.prepare(`
-            UPDATE payouts SET amount_cents=(SELECT SUM(commission_cents) FROM conversions WHERE payout_id=payouts.id)
+            UPDATE payouts SET amount_cents=(SELECT SUM(payout_cents) FROM conversions WHERE payout_id=payouts.id)
             WHERE batch_key=?1
         `).bind(batchKey),
         db.prepare("SELECT * FROM payouts WHERE affiliate_id=?1 AND status='pending' ORDER BY id LIMIT 1")

@@ -45,6 +45,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0003_dashboard_details.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0011_payout_currency.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -275,6 +276,21 @@ payout run claims the remaining approved commissions under a fresh key.
 For a verified legacy transfer without attached conversions, pass the
 original IDs as `conversionIds`, for example `{"id":1,"conversionIds":[4,5]}`.
 
+### Payout currency
+
+Stripe transfers come out of your platform balance, which Stripe holds in
+your settlement currency. Set it with `AFFILIATE_PAYOUT_CURRENCY` (default
+`usd`); Stripe then converts to each partner's bank currency on their side.
+
+Commissions on sales in other currencies are converted at the rate Stripe
+actually used when it settled that sale: the payout run reads the sale's
+charge and balance transaction and converts the commission in the same
+proportion. Each conversion keeps `payout_cents`, `payout_currency` and
+`fx_source` (the `txn_…` balance transaction), so every converted amount can
+be traced back to Stripe. A commission that can't be converted (unknown
+currency, no settled charge, or a balance in another currency) stops the run
+with HTTP 409 for reconciliation, as before; nothing is guessed.
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -324,6 +340,7 @@ context to the helpers directly.
 | `functions/api/admin/conversions.js` | List conversions |
 | `functions/api/admin/conversion-approve.js` | Approve/reject conversions |
 | `functions/api/admin/payouts-run.js` | Stripe Transfer or manual payout |
+| `src/settlement.js` | Commission amounts in the payout currency |
 | `functions/api/admin/payouts-reconcile.js` | Pending batch reconciliation |
 | `tests/unit/` | Unit tests (crypto, auth, gate, email) |
 | `migrations/0001_affiliates.sql` | Complete schema: affiliates, applications, clicks, conversions, and durable payout batches |
@@ -348,6 +365,7 @@ routes itself — see `src/route.js` for the exact paths.
 | `ADMIN_TOKEN` | `wrangler secret put` | Admin API gate |
 | `AFFILIATE_REF_COOKIE` | optional | Attribution cookie name (default `affiliate_ref`) |
 | `AFFILIATE_IP_SALT` | optional | IP hash salt |
+| `AFFILIATE_PAYOUT_CURRENCY` | optional | Currency payouts are sent in, your Stripe settlement currency (default `usd`) |
 
 ## Tests
 
@@ -394,8 +412,7 @@ Money includes `currency_decimals` for Stripe's minor-unit representation.
 product/status/date filters. The CSV streams in bounded batches, uses safe
 order/payout references, excludes customer identities, and escapes spreadsheet
 formula prefixes. Both reporting endpoints require an active affiliate session.
-Payout transfers remain USD-only; newly claimed foreign/unknown-currency
-commissions return HTTP 409 for reconciliation instead of being paid as USD.
+Payouts are sent in the platform's currency (see "Payout currency" below).
 
 ## Admin dashboard and local demo
 
