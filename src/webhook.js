@@ -4,6 +4,7 @@
 import { currencyCode } from './money.js';
 import { resolvePaidAttribution } from './promotion.js';
 import { stripeId, stripeRequest } from './stripe.js';
+import { selfReferralReason } from './fraud.js';
 
 export async function recordConversion(session, event, env, lineItems = session?.line_items?.data || []) {
     if (!session) return null;
@@ -31,7 +32,7 @@ export async function recordConversion(session, event, env, lineItems = session?
     if (!affiliateId) return;
 
     const aff = await env.DB.prepare(
-        'SELECT commission_pct, status FROM affiliates WHERE id=?1'
+        'SELECT commission_pct, status, email FROM affiliates WHERE id=?1'
     ).bind(affiliateId).first();
     if (!aff) throw new Error('Attributed affiliate not found');
     if (!recorded && aff.status !== 'active') return null;
@@ -52,14 +53,22 @@ export async function recordConversion(session, event, env, lineItems = session?
         };
     });
     const paymentIntent = stripeId(session.payment_intent);
+    const ipRows = (await env.DB.prepare('SELECT ip_hash FROM affiliate_ip_hashes WHERE affiliate_id=?1')
+        .bind(affiliateId).all()).results || [];
+    const fraudReason = selfReferralReason({
+        affiliateEmail: aff.email,
+        customerEmail: session.customer_details?.email,
+        buyerIpHash: session.metadata?.affiliate_buyer_ip_hash,
+        affiliateIpHashes: ipRows.map(row => row.ip_hash),
+    });
     await env.DB.prepare(`
         INSERT INTO conversions
           (affiliate_id, stripe_session_id, stripe_event_id, payment_intent,
            customer_email, amount_cents, commission_cents, status, created_at,
-           currency, customer_country, commission_pct, items_json)
+           currency, customer_country, commission_pct, items_json, fraud_reason)
         VALUES (?1,?2,?3,?4,?5,?6,?7,
                 CASE WHEN EXISTS (SELECT 1 FROM refunded_payments WHERE payment_intent=?4)
-                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12)
+                     THEN 'refunded' ELSE 'pending' END,?8,?9,?10,?11,?12,?13)
         ON CONFLICT(stripe_session_id) DO UPDATE SET
           payment_intent=COALESCE(conversions.payment_intent, excluded.payment_intent),
           status=CASE WHEN excluded.status='refunded' AND conversions.status IN ('pending','approved','paying')
@@ -80,7 +89,8 @@ export async function recordConversion(session, event, env, lineItems = session?
         currencyCode(session.currency),
         typeof country === 'string' && /^[a-z]{2}$/i.test(country) ? country.toUpperCase() : null,
         aff.commission_pct,
-        JSON.stringify(items)
+        JSON.stringify(items),
+        fraudReason
     ).run();
     return session;
 }

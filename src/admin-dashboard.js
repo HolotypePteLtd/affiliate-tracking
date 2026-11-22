@@ -134,7 +134,7 @@ __STYLESHEETS__
     const conversions = state.conversions.filter(c => !$('conversion-filter').value || c.status === $('conversion-filter').value);
     $('conversion-rows').replaceChildren(); $('conversions-empty').hidden = conversions.length > 0;
     conversions.forEach(c => {
-      const row = document.createElement('tr'); cell(row, date(c.created_at)); cell(row, c.affiliate_name || c.affiliate_code); cell(row, c.customer_email); cell(row, money(c.amount_cents, c.currency)); cell(row, money(c.commission_cents, c.currency)); badge(row, c.status);
+      const row = document.createElement('tr'); cell(row, date(c.created_at)); cell(row, c.affiliate_name || c.affiliate_code); cell(row, c.customer_email); cell(row, money(c.amount_cents, c.currency)); cell(row, money(c.commission_cents, c.currency)); badge(row, c.status); if (c.fraud_reason) { const flag = document.createElement('small'); flag.className = 'error'; flag.textContent = c.fraud_reason === 'self_email' ? 'Flagged: buyer email is the partner\'s' : c.fraud_reason === 'self_ip' ? 'Flagged: bought from the partner\'s sign-in IP' : 'Flagged: ' + c.fraud_reason; row.lastChild.appendChild(flag); }
       if (c.status === 'pending' || c.status === 'approved') action(cell(row, ''), c.status === 'pending' ? 'Approve' : 'Return to pending', async () => {
         await api('/api/admin/conversion-approve', { id: c.id, approved: c.status === 'pending' }); return 'Conversion updated.';
       }); else cell(row, '—');

@@ -18,7 +18,7 @@ export async function onRequestGet(context) {
         rows = await db.prepare(`
             SELECT cnv.id, cnv.affiliate_id, a.code as affiliate_code, a.name as affiliate_name,
                    cnv.stripe_session_id, cnv.customer_email, cnv.amount_cents,
-                   cnv.commission_cents, cnv.currency, cnv.status, cnv.created_at
+                   cnv.commission_cents, cnv.currency, cnv.status, cnv.fraud_reason, cnv.created_at
             FROM conversions cnv
             JOIN affiliates a ON a.id = cnv.affiliate_id
             WHERE cnv.status=?1
@@ -28,7 +28,7 @@ export async function onRequestGet(context) {
         rows = await db.prepare(`
             SELECT cnv.id, cnv.affiliate_id, a.code as affiliate_code, a.name as affiliate_name,
                    cnv.stripe_session_id, cnv.customer_email, cnv.amount_cents,
-                   cnv.commission_cents, cnv.currency, cnv.status, cnv.created_at
+                   cnv.commission_cents, cnv.currency, cnv.status, cnv.fraud_reason, cnv.created_at
             FROM conversions cnv
             JOIN affiliates a ON a.id = cnv.affiliate_id
             ORDER BY cnv.created_at DESC LIMIT 200

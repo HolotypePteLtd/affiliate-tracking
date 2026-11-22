@@ -9,7 +9,8 @@
 // With AFFILIATE_HOLD_DAYS unset, nothing is released and every conversion
 // waits for manual approval, as before. With it set, a pending conversion is
 // approved once it is at least that many days old, unless it was refunded or
-// disputed, its affiliate is not active, or the affiliate has review_required.
+// disputed, its affiliate is not active, the affiliate has review_required,
+// or the sale was flagged by the fraud checks (src/fraud.js).
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -30,7 +31,7 @@ export async function releaseHeldConversions(env, now = Date.now()) {
     const cutoff = now - days * DAY_MS;
     const result = await env.DB.prepare(`
         UPDATE conversions SET status='approved', approved_at=?1
-        WHERE status='pending' AND created_at <= ?2
+        WHERE status='pending' AND created_at <= ?2 AND fraud_reason IS NULL
           AND affiliate_id IN (SELECT id FROM affiliates WHERE status='active' AND review_required=0)
           AND (payment_intent IS NULL
                OR NOT EXISTS (SELECT 1 FROM refunded_payments r WHERE r.payment_intent=conversions.payment_intent))

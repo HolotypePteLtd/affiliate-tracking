@@ -19,6 +19,7 @@ import {
     createSession,
     sessionCookieHeader,
 } from '../_affiliate-auth.js';
+import { requestIpHash } from '../../../src/ip.js';
 
 export async function onRequestPost(context) {
     const body = await readPublicBody(context.request);
@@ -101,6 +102,17 @@ export async function onRequestGet(context) {
             .bind(claims.jti, claims.exp, claims.sub, claims.version, now),
     ]);
     if (!redemption.meta.changes) return Response.redirect(home, 302);
+    // Remember where the affiliate signs in from, for the self-referral check.
+    const ipHash = await requestIpHash(context.request, env);
+    if (ipHash) {
+        try {
+            await env.DB.prepare(`INSERT INTO affiliate_ip_hashes (affiliate_id, ip_hash, last_seen_at) VALUES (?1,?2,?3)
+                ON CONFLICT(affiliate_id, ip_hash) DO UPDATE SET last_seen_at=excluded.last_seen_at`)
+                .bind(claims.sub, ipHash, Date.now()).run();
+        } catch (err) {
+            console.error('Affiliate sign-in IP record failed:', err.message);
+        }
+    }
     const headers = new Headers({ Location: dash });
     headers.append('Set-Cookie', sessionCookieHeader(session, context.request.url));
     return new Response(null, { status: 302, headers });

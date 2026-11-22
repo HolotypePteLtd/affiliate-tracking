@@ -14,6 +14,7 @@
 
 import { readAffiliateRef } from './ref.js';
 import { findPromotionCode, affiliateForPromotion, PromotionCodeError } from './promotion.js';
+import { requestIpHash } from './ip.js';
 
 export async function attachAffiliateAttribution(params, request, env, { promoCode } = {}) {
     if (!(params instanceof URLSearchParams)) return;
@@ -59,6 +60,10 @@ export async function attachAffiliateAttribution(params, request, env, { promoCo
         params.set('metadata[affiliate_id]', String(aff.id));
         params.set('metadata[affiliate_code]', aff.code);
         params.set('metadata[affiliate_source]', promoAffiliate ? 'promo_code' : 'cookie');
+        // For the self-referral check: compared with the affiliate's own
+        // sign-in IP hashes when the sale is recorded. Never a raw IP.
+        const buyerIpHash = await requestIpHash(request, env);
+        if (buyerIpHash) params.set('metadata[affiliate_buyer_ip_hash]', buyerIpHash);
     }
     // Buyer discount. Pre-applied via the promotion code minted at approval
     // time; absent until an admin approves the affiliate.

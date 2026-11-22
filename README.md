@@ -46,6 +46,7 @@ pnpm wrangler d1 migrations apply DB --remote
 # pnpm wrangler d1 execute DB --file=migrations/0004_affiliate_terms.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0005_affiliate_operations.sql --remote
 # pnpm wrangler d1 execute DB --file=migrations/0006_hold_period.sql --remote
+# pnpm wrangler d1 execute DB --file=migrations/0007_fraud_checks.sql --remote
 
 # 3. Set secrets
 pnpm wrangler secret put AFFILIATE_SESSION_SECRET
@@ -315,6 +316,23 @@ curl -X POST https://yoursite.com/api/admin/affiliate-review \
   -d '{"id":1,"review_required":true}'
 ```
 
+### Fraud checks
+
+Built in, nothing to configure:
+
+- **Link previews and crawlers don't count.** Chat apps, social sites and
+  search engines fetch a referral link without anyone clicking it. Those
+  requests (by user agent, and Cloudflare's verified-bot flag when present)
+  record no click and get no cookie.
+- **One IP counts once a day per affiliate,** even without the cookie, so a
+  script hitting a referral link can't inflate the numbers.
+- **Self-referrals are flagged.** A sale is marked in `conversions.fraud_reason`
+  when the buyer's email is the affiliate's own (`self_email`), or the buyer
+  checked out from an IP the affiliate signed in to their dashboard from
+  (`self_ip`). Only salted IP hashes are stored. Flagged sales stay pending
+  for an admin, show the reason in the admin dashboard, and are never
+  approved by the hold period.
+
 ### Partner access and onboarding
 
 Admins can suspend or reactivate an approved partner from the dashboard or
@@ -365,6 +383,8 @@ context to the helpers directly.
 | `functions/api/admin/conversion-approve.js` | Approve/reject conversions |
 | `functions/api/admin/affiliate-review.js` | Always review one affiliate's conversions by hand |
 | `src/hold.js` | Automatic hold period (`releaseHeldConversions`) |
+| `src/fraud.js` | Bot and link-preview detection, self-referral check |
+| `src/ip.js` | Salted IP hashing |
 | `functions/api/admin/payouts-run.js` | Stripe Transfer or manual payout |
 | `functions/api/admin/payouts-reconcile.js` | Pending batch reconciliation |
 | `tests/unit/` | Unit tests (crypto, auth, gate, email) |

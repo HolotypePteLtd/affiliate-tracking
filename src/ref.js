@@ -13,6 +13,8 @@
 // HTTPS and AFFILIATE_REF_LEGACY_COOKIE for a read-only migration fallback.
 // Resolved per-call since env differs per environment.
 import { hostCookieName } from './cookie.js';
+import { requestIpHash } from './ip.js';
+import { isAutomatedRequest, CLICK_WINDOW_MS } from './fraud.js';
 
 export const DEFAULT_REF_COOKIE = 'affiliate_ref';
 const REF_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -72,6 +74,8 @@ export async function applyAffiliateRef(request, env, respond, ctx) {
         return null;
     }
     if (!aff) return null;
+    // Link previews and crawlers neither count as a click nor get a cookie.
+    if (isAutomatedRequest(request)) return null;
 
     // One click per fresh referral: a visitor already carrying this code (page
     // reloads, multi-page browsing) is not a second click.
@@ -108,20 +112,16 @@ export async function applyAffiliateRef(request, env, respond, ctx) {
 
 async function recordClick(request, env, affiliateId) {
     try {
-        const ipHash = await hashIp(request.headers.get('cf-connecting-ip'), env.AFFILIATE_IP_SALT);
-        await env.DB.prepare(
-            'INSERT INTO clicks (affiliate_id, ip_hash, created_at) VALUES (?1,?2,?3)'
-        ).bind(affiliateId, ipHash, Date.now()).run();
+        const ipHash = await requestIpHash(request, env);
+        const now = Date.now();
+        // One click per IP per affiliate per window; a request without an IP
+        // can't be deduplicated and is counted.
+        await env.DB.prepare(`INSERT INTO clicks (affiliate_id, ip_hash, created_at)
+            SELECT ?1, ?2, ?3
+            WHERE ?2 IS NULL OR NOT EXISTS (
+                SELECT 1 FROM clicks WHERE affiliate_id=?1 AND ip_hash=?2 AND created_at > ?4)
+        `).bind(affiliateId, ipHash, now, now - CLICK_WINDOW_MS).run();
     } catch (err) {
         console.error('Affiliate click insert failed:', err.message);
     }
-}
-
-async function hashIp(ip, salt) {
-    if (!ip) return null;
-    const data = new TextEncoder().encode(ip + (salt || ''));
-    const buf = await crypto.subtle.digest('SHA-256', data);
-    return [...new Uint8Array(buf)]
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
 }
